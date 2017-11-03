@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=collect-thrashing-info
+Exec=/usr/bin/collect-thrashing-info.sh
+TryExec=/usr/bin/collect-thrashing-info.sh
+NoDisplay=true
+

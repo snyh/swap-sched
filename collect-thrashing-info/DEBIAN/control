@@ -1,0 +1,9 @@
+Package: collect-thrashing-info
+Section: misc
+Priority: optional
+Standards-Version: 3.9.2
+Version: 0.1
+Architecture: all
+Depends: dstat
+Maintainer: xiabin<xiabin@deepin.com>
+Description: collect the thrashing informations when it happend

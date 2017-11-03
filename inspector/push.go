@@ -1,17 +1,32 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/influxdata/influxdb/client/v2"
+	"io"
 	"time"
 )
 
-type Client struct {
+type InfluxClient struct {
 	c      client.Client
 	dbname string
 }
+type DumpClient struct {
+	w io.Writer
+}
 
-func (c *Client) Push(infos []ProcessInfo) error {
+func (c DumpClient) Push(infos []ProcessInfo) error {
+	return json.NewEncoder(c.w).Encode(infos)
+}
+func (c DumpClient) Close() error { return nil }
+
+type DataSource interface {
+	Push([]ProcessInfo) error
+	Close() error
+}
+
+func (c *InfluxClient) Push(infos []ProcessInfo) error {
 	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
 		Database:  c.dbname,
 		Precision: "ms",
@@ -34,9 +49,9 @@ func (c *Client) Push(infos []ProcessInfo) error {
 	return c.c.Write(bp)
 }
 
-func (c *Client) Close() error { return c.c.Close() }
+func (c *InfluxClient) Close() error { return c.c.Close() }
 
-func NewClient(addr string, user string, passwd string, dbname string) (*Client, error) {
+func NewInfluxClient(addr string, user string, passwd string, dbname string) (*InfluxClient, error) {
 	c, err := client.NewHTTPClient(client.HTTPConfig{
 		Addr:     addr,
 		Username: user,
@@ -55,5 +70,5 @@ func NewClient(addr string, user string, passwd string, dbname string) (*Client,
 	c.Query(client.Query{
 		Command: fmt.Sprintf("create database %s", dbname),
 	})
-	return &Client{c, dbname}, nil
+	return &InfluxClient{c, dbname}, nil
 }

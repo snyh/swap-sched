@@ -3,12 +3,21 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"syscall"
 	"time"
 )
 
+func Error(fmtStr string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, fmtStr, args...)
+}
+
 func fetchAllUserProcess() []ProcessInfo {
-	ps, _ := Pids()
+	ps, err := Pids()
+	if err != nil {
+		Error("Panic: %v\n", err)
+		return nil
+	}
 	var infos []ProcessInfo
 	for _, p := range ps {
 		if p == int32(MyPID) {
@@ -16,7 +25,7 @@ func fetchAllUserProcess() []ProcessInfo {
 		}
 		info, err := FetchProcessInfo(p)
 		if err != nil {
-			fmt.Println("E:", err)
+			Error("E: %v\n", err)
 			// The process has been exists
 			continue
 		}
@@ -31,34 +40,42 @@ func fetchAllUserProcess() []ProcessInfo {
 
 var MyPID = syscall.Getpid()
 
-func init() {
-	syscall.Mlockall(syscall.MCL_FUTURE)
-}
-
 func main() {
 	var addr string
 	var user, passwd string
 	var dbname string
+	var dump bool
 
 	flag.StringVar(&addr, "addr", "http://127.0.0.1:8086", "infulxdb address")
 	flag.StringVar(&user, "user", "snyh", "influxdb user")
 	flag.StringVar(&passwd, "password", "snyh", "influxdb password")
 	flag.StringVar(&dbname, "dbname", "test", "influxdb database name")
+	flag.BoolVar(&dump, "dump", false, "only dump the stat data")
 	flag.Parse()
 
-	client, err := NewClient(addr, user, passwd, dbname)
-	if err != nil {
-		fmt.Println("E:", err)
-		return
-	}
-	defer client.Close()
+	var client DataSource
+	var err error
 
-	fmt.Println("Start pushing..", time.Now())
+	Error("Start pushing..%v\n", time.Now())
+
+	if dump {
+		client = DumpClient{os.Stdout}
+	} else {
+		syscall.Mlockall(syscall.MCL_FUTURE)
+
+		client, err = NewInfluxClient(addr, user, passwd, dbname)
+		if err != nil {
+			Error("E: %v\n", err)
+			return
+		}
+		defer client.Close()
+	}
+
 	for {
 		time.Sleep(time.Millisecond * 500)
 		err = client.Push(fetchAllUserProcess())
 		if err != nil {
-			fmt.Println("E2:", err)
+			Error("E2: %v\n", err)
 		}
 	}
 }

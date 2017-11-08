@@ -32,6 +32,8 @@ func Pids() ([]int32, error) {
 
 type ProcessInfo map[string]interface{}
 
+// To Convert it to a map[string]interface{},
+// for simply write data to influxdb
 func (p _ProcessInfo) To() ProcessInfo {
 	return map[string]interface{}{
 		"Pid":         p.Pid,

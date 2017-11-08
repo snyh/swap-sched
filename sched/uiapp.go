@@ -61,7 +61,9 @@ func (app *UIApp) SetLimitRSS(v uint64) error {
 func (app *UIApp) LimitRSS() uint64 {
 	return app.limit
 }
-
+func (app *UIApp) IsLive() bool {
+	return app.live
+}
 func (app *UIApp) Run() error {
 	defer func() {
 		CGDelete(memoryCtrl, app.cgroup)

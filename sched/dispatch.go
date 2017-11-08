@@ -106,12 +106,19 @@ func (d *Dispatcher) blance() {
 	}
 
 	ilimit := info.InactiveAppLimit()
+
+	var liveApps []*UIApp
 	for _, app := range d.inactiveApps {
+		if !app.IsLive() {
+			continue
+		}
 		err = app.SetLimitRSS(ilimit)
 		if err != nil {
 			fmt.Println("SetActtiveAppLimit failed:", app, err)
 		}
+		liveApps = append(liveApps, app)
 	}
+	d.inactiveApps = liveApps
 }
 
 func (d *Dispatcher) Blance() {

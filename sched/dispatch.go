@@ -123,6 +123,7 @@ func (d *Dispatcher) Blance() {
 
 type MemInfo struct {
 	TotalRSSFree     uint64 //当前一共可用的物理内存
+	TotalUsedSwap    uint64 //当前已使用的Swap内存
 	ActiveAppRSS     uint64 //活跃App占用的物理内存
 	ActiveAppSwap    uint64 //活跃App占用的Swap内存
 	InactiveAppsRSS  uint64 //除活跃App外所有APP一共占用的物理内存 (不含DDE等非UI APP组件)
@@ -135,10 +136,17 @@ func (info MemInfo) UIAppsLimit() uint64 {
 }
 
 func (info MemInfo) String() string {
-	return fmt.Sprintf("UI Limit: %dMB\nActive App Limit: %dMB\nInAcitve App Limit %dMB (%d)",
+	str := fmt.Sprintf("TotalFree %dMB, SwapUsed: %dMB\n",
+		info.TotalRSSFree/MB, info.TotalUsedSwap/MB)
+	str += fmt.Sprintf("UI Limit: %dMB\nActive App Limit: %dMB (1 need %dMB)\nInAcitve App Limit %dMB (%d need %dMB)",
 		info.UIAppsLimit()/MB,
 		info.ActiveAppLimit()/MB,
-		info.InactiveAppLimit()/MB, info.n)
+		(info.ActiveAppRSS+info.ActiveAppSwap)/MB,
+		info.InactiveAppLimit()/MB,
+		info.n,
+		(info.InactiveAppsRSS+info.InactiveAppsSwap)/MB,
+	)
+	return str
 }
 
 const MB = 1000 * 1000
@@ -157,18 +165,24 @@ func (info MemInfo) ActiveAppLimit() uint64 {
 
 	// 逐步满足ActiveApp的内存需求，但上限由UIAppsLimit()决定(cgroup本身会保证,不需要在这里做截断)。
 	return max(info.ActiveAppRSS+100*MB, info.UIAppsLimit()-100*MB)
-
 }
 
 func (info MemInfo) InactiveAppLimit() uint64 {
 	// TODO: 是否需要除以app数量?
 	//优先保证ActiveApp有机会完全加载到RSS中
-	return info.TotalRSSFree - (info.ActiveAppRSS + info.ActiveAppSwap)
+	min := func(a, b uint64) uint64 {
+		if a < b {
+			return a
+		}
+		return b
+	}
+	activeMemory := info.ActiveAppRSS + info.ActiveAppSwap
+	return min(info.UIAppsLimit()-activeMemory, info.TotalRSSFree-activeMemory)
 }
 
 func (d *Dispatcher) Sample() MemInfo {
 	var info MemInfo
-	info.TotalRSSFree = MemoryAvailable()
+	info.TotalRSSFree, info.TotalUsedSwap = SystemMemoryInfo()
 
 	for _, app := range d.inactiveApps {
 		info.InactiveAppsRSS += app.RSS()

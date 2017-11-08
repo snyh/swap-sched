@@ -12,10 +12,13 @@ func main() {
 }
 
 func Test(d *Dispatcher) {
-	go d.Run("eog")
+	go d.Run("google-chrome-stable")
+	go d.Run("deepin-terminal")
+	go d.Run("wps")
+	go d.Run("wpp")
+	go d.Run("thunderbird")
 	err := d.Run("gedit")
 	if err != nil {
 		fmt.Println("TEST E:", err)
 	}
-
 }

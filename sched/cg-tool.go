@@ -53,23 +53,36 @@ func CGExec(ctrl string, path string, cmd string) error {
 	return _Command("cgexec", "-g", ctrl+":"+path, cmd).Run()
 }
 
-func MemoryAvailable() uint64 {
+// SystemMemoryInfo 返回 系统可用内存, 系统已用Swap
+func SystemMemoryInfo() (uint64, uint64) {
 	contents, err := ioutil.ReadFile("/proc/meminfo")
 	if err != nil {
-		return 0
+		return 0, 0
 	}
+
+	var available, swtotal, swfree uint64
 	for _, line := range strings.Split(string(contents), "\n") {
-		const t = "MemAvailable:"
-		if strings.HasPrefix(line, t) {
-			value := strings.Trim(line[len(t):], " kB")
-			v, err := strconv.ParseUint(value, 10, 64)
-			if err != nil {
-				return 0
-			}
-			return v * 1024
+		fields := strings.Split(line, ":")
+		if len(fields) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(fields[0])
+		value := strings.TrimSpace(fields[1])
+		value = strings.Replace(value, " kB", "", -1)
+		t, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return 0, 0
+		}
+		switch key {
+		case "MemAvailable":
+			available = t * 1024
+		case "SwapTotal":
+			swtotal = t * 1024
+		case "SwapFree":
+			swfree = t * 1024
 		}
 	}
-	return 0
+	return available, swtotal - swfree
 }
 
 func CGroupPIDs(ctrl string, name string) []int {

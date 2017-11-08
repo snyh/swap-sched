@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
-	"os"
 	"os/exec"
 	"os/user"
 	"path"
@@ -26,8 +25,6 @@ func unFreeze(pids []int) {
 func _Command(c string, args ...string) *exec.Cmd {
 	cmd := exec.Command(c, args...)
 	fmt.Println("Run:", cmd.Args)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
 	return cmd
 }
 

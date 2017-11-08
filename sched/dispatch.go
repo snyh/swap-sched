@@ -91,7 +91,16 @@ func (d *Dispatcher) blance() {
 	defer d.Unlock()
 
 	info := d.Sample()
-	fmt.Printf("--------DEBUG------------\n%s\n\n", info)
+
+	if d.activeApp == nil {
+		fmt.Printf("--------DEBUG--NO Active APP----------\n%s\n\n", info)
+	} else {
+		fmt.Printf("--------DEBUG--Active APP: %q(%q) (%dMB,%dMB)----------\n%s\n\n",
+			d.activeApp.CMD,
+			d.activeApp.cgroup,
+			info.ActiveAppRSS/MB, info.ActiveAppSwap/MB,
+			info)
+	}
 
 	err := SetLimitRSS(baseCGDir, info.UIAppsLimit())
 	if err != nil {
@@ -135,7 +144,13 @@ type MemInfo struct {
 	ActiveAppSwap    uint64 //活跃App占用的Swap内存
 	InactiveAppsRSS  uint64 //除活跃App外所有APP一共占用的物理内存 (不含DDE等非UI APP组件)
 	InactiveAppsSwap uint64 //除活跃App外所有APP一共占用的Swap内存 (不含DDE等非UI APP组件)
-	n                int
+
+	appInfos []struct {
+		Name       string
+		RSS        uint64
+		Swap       uint64
+		CGroupPath string
+	}
 }
 
 func (info MemInfo) UIAppsLimit() uint64 {
@@ -150,7 +165,7 @@ func (info MemInfo) String() string {
 		info.ActiveAppLimit()/MB,
 		(info.ActiveAppRSS+info.ActiveAppSwap)/MB,
 		info.InactiveAppLimit()/MB,
-		info.n,
+		len(info.appInfos),
 		(info.InactiveAppsRSS+info.InactiveAppsSwap)/MB,
 	)
 	return str
@@ -192,12 +207,15 @@ func (d *Dispatcher) Sample() MemInfo {
 	info.TotalRSSFree, info.TotalUsedSwap = SystemMemoryInfo()
 
 	for _, app := range d.inactiveApps {
-		info.InactiveAppsRSS += app.RSS()
+		rss, swap := app.RSS()
+		info.InactiveAppsRSS += rss
+		info.InactiveAppsSwap += swap
 	}
 
 	if d.activeApp != nil {
-		info.ActiveAppRSS = d.activeApp.RSS()
+		rss, swap := d.activeApp.RSS()
+		info.ActiveAppRSS = rss
+		info.ActiveAppSwap = swap
 	}
-	info.n = len(d.inactiveApps)
 	return info
 }

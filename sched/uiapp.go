@@ -33,19 +33,27 @@ func (app *UIApp) HasChild(pid int) bool {
 	return false
 }
 
-func (app *UIApp) RSS() uint64 {
+func (app *UIApp) RSS() (uint64, uint64) {
 	bs, err := ioutil.ReadFile(path.Join(baseCGroup, memoryCtrl, app.cgroup, "memory.stat"))
 	if err != nil {
-		return 0
+		return 0, 0
 	}
+
+	var aaSize, iaSize uint64
 	for _, line := range strings.Split(string(bs), "\n") {
-		const t = "total_active_anon "
-		if strings.HasPrefix(line, t) {
-			v, _ := strconv.ParseUint(line[len(t):], 10, 64)
-			return v
+		const ta = "total_active_anon "
+		const tia = "total_inactive_anon "
+		switch {
+		case strings.HasPrefix(line, ta):
+			aaSize, _ = strconv.ParseUint(line[len(ta):], 10, 64)
+		case strings.HasPrefix(line, tia):
+			iaSize, _ = strconv.ParseUint(line[len(tia):], 10, 64)
+		}
+		if aaSize != 0 && iaSize != 0 {
+			return aaSize, iaSize
 		}
 	}
-	return 0
+	return 0, 0
 }
 
 func (app *UIApp) PIDs() []int {

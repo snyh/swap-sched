@@ -12,8 +12,10 @@ func main() {
 }
 
 func Test(d *Dispatcher) {
+	go d.Run("eog")
 	err := d.Run("gedit")
 	if err != nil {
 		fmt.Println("TEST E:", err)
 	}
+
 }

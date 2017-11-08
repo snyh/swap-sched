@@ -2,54 +2,81 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
+	"io/ioutil"
 	"path"
+	"strconv"
+	"strings"
 )
 
-const baseCGDir = "/sys/fs/cgroup/memory/77@dde/uiapps"
+const memoryCtrl = "memory"
+const baseCGroup = "/sys/fs/cgroup"
+const baseCGDir = "77@dde/uiapps"
 
 type UIApp struct {
 	cgroup string
 	CMD    string
-	limit  int
+	limit  uint64
+	live   bool
 }
 
 func (app *UIApp) HasChild(pid int) bool {
-	panic("not implement")
+	bs, err := ioutil.ReadFile(path.Join(baseCGroup, memoryCtrl, app.cgroup, "cgroup.procs"))
+	if err != nil {
+		return false
+	}
+	pidStr := fmt.Sprintf("%d", pid)
+	for _, line := range strings.Split(string(bs), "\n") {
+		if pidStr == line {
+			return true
+		}
+	}
+	return false
 }
-func (app *UIApp) RSS() int {
-	panic("not implement")
+
+func (app *UIApp) RSS() uint64 {
+	bs, err := ioutil.ReadFile(path.Join(baseCGroup, memoryCtrl, app.cgroup, "memory.stat"))
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(bs), "\n") {
+		const t = "total_active_anon "
+		if strings.HasPrefix(line, t) {
+			v, _ := strconv.ParseUint(line[len(t):], 10, 64)
+			return v
+		}
+	}
+	return 0
 }
-func (app *UIApp) SetLimitRSS(v int) error {
+
+func (app *UIApp) PIDs() []int {
+	return CGroupPIDs(memoryCtrl, app.cgroup)
+}
+
+func (app *UIApp) SetLimitRSS(v uint64) error {
 	app.limit = v
 
-	// TODO: send SIGSTOP to process in cgroup.procs for avoiding write failed
-	f, err := os.Open(path.Join(app.cgroup, "limit_in_bytes"))
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = fmt.Fprintf(f, "%v", app.limit)
-	return err
+	return SetLimitRSS(app.cgroup, v)
 }
 
-func (app *UIApp) LimitRSS() int {
-
+func (app *UIApp) LimitRSS() uint64 {
 	return app.limit
 }
 
 func (app *UIApp) Run() error {
-	defer os.RemoveAll(app.cgroup)
-	return exec.Command("cgexec", app.CMD).Run()
+	defer func() {
+		CGDelete(memoryCtrl, app.cgroup)
+		app.live = false
+	}()
+
+	app.live = true
+	return CGExec(memoryCtrl, app.cgroup, app.CMD)
 }
 
 func NewApp(id int, cmd string) (*UIApp, error) {
 	cgroup := fmt.Sprintf("%s/%d", baseCGDir, id)
-	var err error
-	err = os.Mkdir(cgroup, 0700)
+	err := CGCreate(memoryCtrl, cgroup)
 	if err != nil {
 		return nil, err
 	}
-	return &UIApp{cgroup, cmd, -1}, nil
+	return &UIApp{cgroup, cmd, 0, false}, nil
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
 	"os/exec"
 	"os/user"
 	"path"
@@ -10,6 +11,39 @@ import (
 	"strings"
 	"syscall"
 )
+
+const memoryCtrl = "memory"
+const baseCGroup = "/sys/fs/cgroup"
+const baseCGDir = "77@dde/uiapps"
+
+var UserName = func() string {
+	u, err := user.Current()
+	if err != nil {
+		panic("Can't find current username")
+	}
+	return u.Username
+}()
+
+func pathExist(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+func CheckPrepared() error {
+	groups := []string{
+		path.Join(baseCGroup, memoryCtrl, baseCGDir),
+		path.Join(baseCGroup, memoryCtrl, baseCGDir),
+		path.Join(baseCGroup, memoryCtrl, baseCGDir),
+	}
+	for _, g := range groups {
+		if !pathExist(g) {
+			p := UserName + ":" + UserName
+			return fmt.Errorf("Please execute %q before running the sched program",
+				fmt.Sprintf("sudo cgreate -t %s -a %s -g memory,cpu,freezer:%s", p, p, baseCGDir))
+		}
+	}
+	return nil
+}
 
 func freeze(pids []int) {
 	for _, p := range pids {
@@ -29,12 +63,7 @@ func _Command(c string, args ...string) *exec.Cmd {
 }
 
 func CGCreate(ctrl string, path string) error {
-	u, err := user.Current()
-	if err != nil {
-		return err
-	}
-	fmt.Println("UUUUUU:", u)
-	p := u.Username + ":" + u.Username
+	p := UserName + ":" + UserName
 	return _Command("cgcreate",
 		"-t", p,
 		"-a", p,

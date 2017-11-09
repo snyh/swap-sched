@@ -8,10 +8,6 @@ import (
 	"strings"
 )
 
-const memoryCtrl = "memory"
-const baseCGroup = "/sys/fs/cgroup"
-const baseCGDir = "77@dde/uiapps"
-
 type UIApp struct {
 	cgroup string
 	CMD    string

@@ -5,6 +5,11 @@ import (
 )
 
 func main() {
+	if err := CheckPrepared(); err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	d := NewDispatcher()
 	go ActiveWindowHandler(d.ActiveWindowHanlder).Monitor("")
 	go Test(d)

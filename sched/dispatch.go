@@ -102,6 +102,9 @@ func (d *Dispatcher) blance() {
 			info)
 	}
 
+	FreezeUIApps()
+	defer THAWEDUIApps()
+
 	err := SetLimitRSS(baseCGDir, info.UIAppsLimit())
 	if err != nil {
 		fmt.Println("SetUIAppsLimit failed:", err)

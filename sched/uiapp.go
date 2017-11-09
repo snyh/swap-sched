@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
-	"path"
 	"strconv"
 	"strings"
 )
@@ -16,12 +14,8 @@ type UIApp struct {
 }
 
 func (app *UIApp) HasChild(pid int) bool {
-	bs, err := ioutil.ReadFile(path.Join(baseCGroup, memoryCtrl, app.cgroup, "cgroup.procs"))
-	if err != nil {
-		return false
-	}
 	pidStr := fmt.Sprintf("%d", pid)
-	for _, line := range strings.Split(string(bs), "\n") {
+	for _, line := range ToLines(ReadCGroupFile(memoryCtrl, app.cgroup, "cgroup.procs")) {
 		if pidStr == line {
 			return true
 		}
@@ -30,13 +24,8 @@ func (app *UIApp) HasChild(pid int) bool {
 }
 
 func (app *UIApp) RSS() (uint64, uint64) {
-	bs, err := ioutil.ReadFile(path.Join(baseCGroup, memoryCtrl, app.cgroup, "memory.stat"))
-	if err != nil {
-		return 0, 0
-	}
-
 	var aaSize, iaSize uint64
-	for _, line := range strings.Split(string(bs), "\n") {
+	for _, line := range ToLines(ReadCGroupFile(memoryCtrl, app.cgroup, "memory.stat")) {
 		const ta = "total_active_anon "
 		const tia = "total_inactive_anon "
 		switch {

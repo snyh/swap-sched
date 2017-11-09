@@ -12,9 +12,13 @@ import (
 	"syscall"
 )
 
-const memoryCtrl = "memory"
-const baseCGroup = "/sys/fs/cgroup"
-const baseCGDir = "77@dde/uiapps"
+const (
+	memoryCtrl  = "memory"
+	cpuCtrl     = "cpu"
+	freezerCtrl = "freezer"
+	baseCGDir   = "77@dde/uiapps"
+	rootCGroup  = "/sys/fs/cgroup"
+)
 
 var UserName = func() string {
 	u, err := user.Current()
@@ -31,15 +35,15 @@ func pathExist(p string) bool {
 
 func CheckPrepared() error {
 	groups := []string{
-		path.Join(baseCGroup, memoryCtrl, baseCGDir),
-		path.Join(baseCGroup, memoryCtrl, baseCGDir),
-		path.Join(baseCGroup, memoryCtrl, baseCGDir),
+		path.Join(rootCGroup, memoryCtrl, baseCGDir),
+		path.Join(rootCGroup, cpuCtrl, baseCGDir),
+		path.Join(rootCGroup, freezerCtrl, baseCGDir),
 	}
 	for _, g := range groups {
 		if !pathExist(g) {
 			p := UserName + ":" + UserName
 			return fmt.Errorf("Please execute %q before running the sched program",
-				fmt.Sprintf("sudo cgreate -t %s -a %s -g memory,cpu,freezer:%s", p, p, baseCGDir))
+				fmt.Sprintf("sudo cgcreate -t %s -a %s -g memory,cpu,freezer:%s", p, p, baseCGDir))
 		}
 	}
 	return nil
@@ -81,13 +85,8 @@ func CGExec(ctrl string, path string, cmd string) error {
 
 // SystemMemoryInfo 返回 系统可用内存, 系统已用Swap
 func SystemMemoryInfo() (uint64, uint64) {
-	contents, err := ioutil.ReadFile("/proc/meminfo")
-	if err != nil {
-		return 0, 0
-	}
-
 	var available, swtotal, swfree uint64
-	for _, line := range strings.Split(string(contents), "\n") {
+	for _, line := range ToLines(ioutil.ReadFile("/proc/meminfo")) {
 		fields := strings.Split(line, ":")
 		if len(fields) != 2 {
 			continue
@@ -111,13 +110,38 @@ func SystemMemoryInfo() (uint64, uint64) {
 	return available, swtotal - swfree
 }
 
+func ToLines(v []byte, hasErr error) []string {
+	if hasErr != nil {
+		return nil
+	}
+	var ret []string
+	for _, line := range strings.Split(string(v), "\n") {
+		if line != "" {
+			ret = append(ret, line)
+		}
+	}
+	return ret
+}
+
+func ReadCGroupFile(ctrl string, name string, key string) ([]byte, error) {
+	return ioutil.ReadFile(path.Join(rootCGroup, ctrl, name, key))
+}
+
+func FreezeUIApps() error {
+	return WriteCGroupFile(freezerCtrl, baseCGDir, "freezer.state", "FROZEN")
+}
+func THAWEDUIApps() error {
+	return WriteCGroupFile(freezerCtrl, baseCGDir, "freezer.state", "THAWED")
+}
+
+func WriteCGroupFile(ctrl string, name string, key string, value interface{}) error {
+	fpath := path.Join(rootCGroup, ctrl, name, key)
+	return ioutil.WriteFile(fpath, []byte(fmt.Sprintf("%v", value)), 0777)
+}
+
 func CGroupPIDs(ctrl string, name string) []int {
 	var pids []int
-	bs, err := ioutil.ReadFile(path.Join(baseCGroup, ctrl, name, "cgroup.procs"))
-	if err != nil {
-		return pids
-	}
-	for _, line := range strings.Split(string(bs), "\n") {
+	for _, line := range ToLines(ReadCGroupFile(ctrl, name, "cgroup.procs")) {
 		pid, _ := strconv.ParseInt(line, 10, 32)
 		if pid != 0 {
 			pids = append(pids, int(pid))
@@ -127,12 +151,5 @@ func CGroupPIDs(ctrl string, name string) []int {
 }
 
 func SetLimitRSS(cgroup string, v uint64) error {
-	// TODO: send SIGSTOP to process in cgroup.procs for avoiding write failed
-	fpath := path.Join(baseCGroup, memoryCtrl, cgroup, "memory.limit_in_bytes")
-
-	pids := CGroupPIDs(memoryCtrl, cgroup)
-	freeze(pids)
-	err := ioutil.WriteFile(fpath, []byte(fmt.Sprintf("%v", v)), 0777)
-	unFreeze(pids)
-	return err
+	return WriteCGroupFile(memoryCtrl, cgroup, "memory.limit_in_bytes", v)
 }

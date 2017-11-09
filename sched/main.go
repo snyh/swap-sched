@@ -9,7 +9,6 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-
 	d := NewDispatcher()
 	go ActiveWindowHandler(d.ActiveWindowHanlder).Monitor("")
 	go Test(d)

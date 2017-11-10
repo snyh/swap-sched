@@ -33,7 +33,10 @@ func pathExist(p string) bool {
 	return err == nil
 }
 
-func CheckPrepared() error {
+func CheckPrepared(auto bool) error {
+	if !pathExist("/usr/bin/cgcreate") {
+		return fmt.Errorf("先执行%q", "sudo apt-get install cgroup-tools")
+	}
 	groups := []string{
 		path.Join(rootCGroup, memoryCtrl, baseCGDir),
 		path.Join(rootCGroup, cpuCtrl, baseCGDir),
@@ -42,8 +45,8 @@ func CheckPrepared() error {
 	for _, g := range groups {
 		if !pathExist(g) {
 			p := UserName + ":" + UserName
-			return fmt.Errorf("Please execute %q before running the sched program",
-				fmt.Sprintf("sudo cgcreate -t %s -a %s -g memory,cpu,freezer:%s", p, p, baseCGDir))
+			cmd := fmt.Sprintf("sudo cgcreate -t %s -a %s -g memory,cpu,freezer:%s", p, p, baseCGDir)
+			return fmt.Errorf("Please execute %q before running the sched program", cmd)
 		}
 	}
 	return nil

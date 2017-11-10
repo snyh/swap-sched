@@ -6,18 +6,28 @@ import (
 	"time"
 )
 
+type TuneConfig struct {
+	MemoryLock            bool          // 是否调用MLockAll
+	FreezeInactiveAppTime time.Duration // 在freeze所有UI APP到设置inacitve apps的时间间隔
+}
+
 type Dispatcher struct {
 	sync.Mutex
 
+	cfg     TuneConfig
 	counter int
+
+	activeXID int
 
 	activeApp    *UIApp
 	inactiveApps []*UIApp
 }
 
-func NewDispatcher() *Dispatcher {
+func NewDispatcher(cfg TuneConfig) *Dispatcher {
 	return &Dispatcher{
-		counter: 0,
+		cfg:       cfg,
+		counter:   0,
+		activeXID: -1,
 	}
 }
 
@@ -37,31 +47,39 @@ func (d *Dispatcher) Run(cmd string) error {
 	return app.Run()
 }
 
-func (d *Dispatcher) ActiveWindowHanlder(pid int) {
-	var newActive *UIApp
-	d.Lock()
-	defer func() {
-		d.Unlock()
-		d.setActiveApp(newActive)
-	}()
-
-	if d.activeApp != nil && d.activeApp.HasChild(pid) {
-		return
-	}
-	for _, app := range d.inactiveApps {
-		if app.HasChild(pid) {
-			newActive = app
-			break
-		}
-	}
-}
-
 func (d *Dispatcher) addApps(app *UIApp) {
 	d.Lock()
 	d.inactiveApps = append(d.inactiveApps, app)
 	d.Unlock()
 }
 
+func (d *Dispatcher) ActiveWindowHanlder(pid int, xid int) {
+	if d.activeXID == xid {
+		return
+	}
+	d.activeXID = xid
+
+	if pid == 0 {
+		d.setActiveApp(nil)
+		return
+	}
+
+	d.Lock()
+	if d.activeApp != nil && d.activeApp.HasChild(pid) {
+		d.Unlock()
+		return
+	}
+
+	var newActive *UIApp
+	for _, app := range d.inactiveApps {
+		if app.HasChild(pid) {
+			newActive = app
+			break
+		}
+	}
+	d.Unlock()
+	d.setActiveApp(newActive)
+}
 func (d *Dispatcher) setActiveApp(newActive *UIApp) {
 	if d.activeApp == newActive {
 		return
@@ -93,7 +111,7 @@ func (d *Dispatcher) blance() {
 	info := d.Sample()
 
 	if d.activeApp == nil {
-		fmt.Printf("--------DEBUG--NO Active APP----------\n%s\n\n", info)
+		fmt.Printf("--------DEBUG--NO Active APP (_NET_ACTIVE_WINDOW: %d)----------\n%s\n\n", d.activeXID, info)
 	} else {
 		fmt.Printf("--------DEBUG--Active APP: %q(%q) (%dMB,%dMB)----------\n%s\n\n",
 			d.activeApp.CMD,
@@ -118,6 +136,7 @@ func (d *Dispatcher) blance() {
 	}
 
 	ilimit := info.InactiveAppLimit()
+	time.Sleep(d.cfg.FreezeInactiveAppTime)
 
 	var liveApps []*UIApp
 	for _, app := range d.inactiveApps {
@@ -148,12 +167,7 @@ type MemInfo struct {
 	InactiveAppsRSS  uint64 //除活跃App外所有APP一共占用的物理内存 (不含DDE等非UI APP组件)
 	InactiveAppsSwap uint64 //除活跃App外所有APP一共占用的Swap内存 (不含DDE等非UI APP组件)
 
-	appInfos []struct {
-		Name       string
-		RSS        uint64
-		Swap       uint64
-		CGroupPath string
-	}
+	n int
 }
 
 func (info MemInfo) UIAppsLimit() uint64 {
@@ -163,12 +177,12 @@ func (info MemInfo) UIAppsLimit() uint64 {
 func (info MemInfo) String() string {
 	str := fmt.Sprintf("TotalFree %dMB, SwapUsed: %dMB\n",
 		info.TotalRSSFree/MB, info.TotalUsedSwap/MB)
-	str += fmt.Sprintf("UI Limit: %dMB\nActive App Limit: %dMB (1 need %dMB)\nInAcitve App Limit %dMB (%d need %dMB)",
+	str += fmt.Sprintf("UI Limit: %dMB\nActive App Limit: %dMB (need %dMB)\nInAcitve App Limit %dMB (%d need %dMB)",
 		info.UIAppsLimit()/MB,
 		info.ActiveAppLimit()/MB,
 		(info.ActiveAppRSS+info.ActiveAppSwap)/MB,
 		info.InactiveAppLimit()/MB,
-		len(info.appInfos),
+		info.n,
 		(info.InactiveAppsRSS+info.InactiveAppsSwap)/MB,
 	)
 	return str
@@ -208,15 +222,16 @@ func (info MemInfo) InactiveAppLimit() uint64 {
 func (d *Dispatcher) Sample() MemInfo {
 	var info MemInfo
 	info.TotalRSSFree, info.TotalUsedSwap = SystemMemoryInfo()
+	info.n = len(d.inactiveApps)
 
 	for _, app := range d.inactiveApps {
-		rss, swap := app.RSS()
+		rss, swap := app.MemoryInfo()
 		info.InactiveAppsRSS += rss
 		info.InactiveAppsSwap += swap
 	}
 
 	if d.activeApp != nil {
-		rss, swap := d.activeApp.RSS()
+		rss, swap := d.activeApp.MemoryInfo()
 		info.ActiveAppRSS = rss
 		info.ActiveAppSwap = swap
 	}

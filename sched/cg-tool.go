@@ -113,6 +113,13 @@ func SystemMemoryInfo() (uint64, uint64) {
 	return available, swtotal - swfree
 }
 
+func ToUint64(v []byte, hasErr error) uint64 {
+	if hasErr != nil {
+		return 0
+	}
+	ret, _ := strconv.ParseUint(strings.TrimSpace(string(v)), 10, 64)
+	return ret
+}
 func ToLines(v []byte, hasErr error) []string {
 	if hasErr != nil {
 		return nil

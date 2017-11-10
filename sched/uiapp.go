@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type UIApp struct {
@@ -23,31 +24,43 @@ func (app *UIApp) HasChild(pid int) bool {
 	return false
 }
 
-func (app *UIApp) RSS() (uint64, uint64) {
-	var aaSize, iaSize uint64
+// MemoryInfo 返回 RSS 以及 Swap使用量 (目前数据不对)
+func (app *UIApp) MemoryInfo() (uint64, uint64) {
+	if !app.live {
+		return 0, 0
+	}
+
+	used := ToUint64(ReadCGroupFile(memoryCtrl, app.cgroup, "memory.usage_in_bytes"))
 	for _, line := range ToLines(ReadCGroupFile(memoryCtrl, app.cgroup, "memory.stat")) {
 		const ta = "total_active_anon "
-		const tia = "total_inactive_anon "
-		switch {
-		case strings.HasPrefix(line, ta):
-			aaSize, _ = strconv.ParseUint(line[len(ta):], 10, 64)
-		case strings.HasPrefix(line, tia):
-			iaSize, _ = strconv.ParseUint(line[len(tia):], 10, 64)
-		}
-		if aaSize != 0 && iaSize != 0 {
-			return aaSize, iaSize
+		if strings.HasPrefix(line, ta) {
+			v, _ := strconv.ParseUint(line[len(ta):], 10, 64)
+			if v > used {
+				break
+			}
+			return used - v, v
 		}
 	}
-	return 0, 0
+	return used, 0
 }
 
 func (app *UIApp) PIDs() []int {
-	return CGroupPIDs(memoryCtrl, app.cgroup)
+	if !app.live {
+		return nil
+	}
+
+	pids := CGroupPIDs(memoryCtrl, app.cgroup)
+	if len(pids) == 0 {
+		app.live = false
+	}
+	return pids
 }
 
 func (app *UIApp) SetLimitRSS(v uint64) error {
+	if !app.live {
+		return nil
+	}
 	app.limit = v
-
 	return SetLimitRSS(app.cgroup, v)
 }
 
@@ -59,8 +72,13 @@ func (app *UIApp) IsLive() bool {
 }
 func (app *UIApp) Run() error {
 	defer func() {
-		CGDelete(memoryCtrl, app.cgroup)
-		app.live = false
+		for {
+			time.Sleep(time.Millisecond * 100)
+			if app.live == false {
+				CGDelete(memoryCtrl, app.cgroup)
+				break
+			}
+		}
 	}()
 
 	app.live = true

@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"pkg.deepin.io/lib/dbus"
-	"syscall"
 	"time"
 )
 
@@ -15,13 +14,17 @@ func main() {
 		return
 	}
 
+	var cfg = TuneConfig{
+		FreezeInactiveAppTime: time.Second * 1,
+	}
 	var daemon bool
 	flag.BoolVar(&daemon, "daemon", false, "run as a daemon")
+	flag.BoolVar(&cfg.MemoryLock, "lock", false, "lock daemon memory")
 
 	flag.Parse()
 
 	if daemon {
-		err = RunAsDaemon()
+		err = RunAsDaemon(cfg)
 	} else {
 		err = RunAsWrapper(flag.Arg(0))
 	}
@@ -30,14 +33,13 @@ func main() {
 	}
 }
 
-func RunAsDaemon() error {
-	d := NewDispatcher()
+func RunAsDaemon(cfg TuneConfig) error {
+	d := NewDispatcher(cfg)
 	err := dbus.InstallOnSession(&DBusWrapper{d, false})
 	if err != nil {
 		return err
 	}
 	go ActiveWindowHandler(d.ActiveWindowHanlder).Monitor("")
-	syscall.Mlockall(syscall.MCL_FUTURE)
 	d.Blance()
 	return nil
 }

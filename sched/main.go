@@ -4,24 +4,28 @@ import (
 	"flag"
 	"fmt"
 	"pkg.deepin.io/lib/dbus"
+	"syscall"
 	"time"
 )
 
-func main() {
-	err := CheckPrepared(true)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+var SystemCGroupRoot string
 
+func main() {
 	var cfg = TuneConfig{
+		RootCGroup:            "77@dde/uiapps",
 		FreezeInactiveAppTime: time.Second * 1,
 	}
 	var daemon bool
 	flag.BoolVar(&daemon, "daemon", false, "run as a daemon")
+	flag.StringVar(&SystemCGroupRoot, "cgroup-root", "/sys/fs/cgroup", "root path of cgroup virtual file system")
 	flag.BoolVar(&cfg.MemoryLock, "lock", false, "lock daemon memory")
-
 	flag.Parse()
+
+	err := CheckPrepared(cfg.RootCGroup)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
 	if daemon {
 		err = RunAsDaemon(cfg)
@@ -40,6 +44,9 @@ func RunAsDaemon(cfg TuneConfig) error {
 		return err
 	}
 	go ActiveWindowHandler(d.ActiveWindowHanlder).Monitor("")
+	if cfg.MemoryLock {
+		syscall.Mlockall(syscall.MCL_CURRENT)
+	}
 	d.Blance()
 	return nil
 }

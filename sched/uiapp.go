@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -15,9 +14,13 @@ type UIApp struct {
 }
 
 func (app *UIApp) HasChild(pid int) bool {
-	pidStr := fmt.Sprintf("%d", pid)
-	for _, line := range ToLines(ReadCGroupFile(memoryCtrl, app.cgroup, "cgroup.procs")) {
-		if pidStr == line {
+	pids := CGroupPIDs(memoryCtrl, app.cgroup)
+	if len(pids) == 0 {
+		app.live = false
+		return false
+	}
+	for _, pid_ := range pids {
+		if pid_ == pid {
 			return true
 		}
 	}
@@ -42,18 +45,6 @@ func (app *UIApp) MemoryInfo() (uint64, uint64) {
 		}
 	}
 	return used, 0
-}
-
-func (app *UIApp) PIDs() []int {
-	if !app.live {
-		return nil
-	}
-
-	pids := CGroupPIDs(memoryCtrl, app.cgroup)
-	if len(pids) == 0 {
-		app.live = false
-	}
-	return pids
 }
 
 func (app *UIApp) SetLimitRSS(v uint64) error {
@@ -85,11 +76,10 @@ func (app *UIApp) Run() error {
 	return CGExec(memoryCtrl, app.cgroup, app.CMD)
 }
 
-func NewApp(id int, cmd string) (*UIApp, error) {
-	cgroup := fmt.Sprintf("%s/%d", baseCGDir, id)
-	err := CGCreate(memoryCtrl, cgroup)
+func NewApp(subCGroup string, cmd string) (*UIApp, error) {
+	err := CGCreate(memoryCtrl, subCGroup)
 	if err != nil {
 		return nil, err
 	}
-	return &UIApp{cgroup, cmd, 0, false}, nil
+	return &UIApp{subCGroup, cmd, 0, false}, nil
 }

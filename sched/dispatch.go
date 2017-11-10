@@ -7,6 +7,7 @@ import (
 )
 
 type TuneConfig struct {
+	RootCGroup            string        // 默认的root cgroup path , 需要外部程序提前配置好为uid可以操控的,且需要有cpu,memory,freezer3个control
 	MemoryLock            bool          // 是否调用MLockAll
 	FreezeInactiveAppTime time.Duration // 在freeze所有UI APP到设置inacitve apps的时间间隔
 }
@@ -39,7 +40,8 @@ func (d *Dispatcher) Counter() int {
 }
 
 func (d *Dispatcher) Run(cmd string) error {
-	app, err := NewApp(d.Counter(), cmd)
+	cgroup := fmt.Sprintf("%s/%d", d.cfg.RootCGroup, d.Counter())
+	app, err := NewApp(cgroup, cmd)
 	if err != nil {
 		return err
 	}
@@ -120,10 +122,10 @@ func (d *Dispatcher) blance() {
 			info)
 	}
 
-	FreezeUIApps()
-	defer THAWEDUIApps()
+	FreezeUIApps(d.cfg.RootCGroup)
+	defer THAWEDUIApps(d.cfg.RootCGroup)
 
-	err := SetLimitRSS(baseCGDir, info.UIAppsLimit())
+	err := SetLimitRSS(d.cfg.RootCGroup, info.UIAppsLimit())
 	if err != nil {
 		fmt.Println("SetUIAppsLimit failed:", err)
 	}

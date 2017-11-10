@@ -16,9 +16,11 @@ const (
 	memoryCtrl  = "memory"
 	cpuCtrl     = "cpu"
 	freezerCtrl = "freezer"
-	baseCGDir   = "77@dde/uiapps"
-	rootCGroup  = "/sys/fs/cgroup"
 )
+
+func JoinCGPath(args ...string) string {
+	return path.Join(SystemCGroupRoot, path.Join(args...))
+}
 
 var UserName = func() string {
 	u, err := user.Current()
@@ -33,19 +35,19 @@ func pathExist(p string) bool {
 	return err == nil
 }
 
-func CheckPrepared(auto bool) error {
+func CheckPrepared(rootCGroup string) error {
 	if !pathExist("/usr/bin/cgcreate") {
 		return fmt.Errorf("先执行%q", "sudo apt-get install cgroup-tools")
 	}
 	groups := []string{
-		path.Join(rootCGroup, memoryCtrl, baseCGDir),
-		path.Join(rootCGroup, cpuCtrl, baseCGDir),
-		path.Join(rootCGroup, freezerCtrl, baseCGDir),
+		JoinCGPath(memoryCtrl, rootCGroup),
+		JoinCGPath(cpuCtrl, rootCGroup),
+		JoinCGPath(freezerCtrl, rootCGroup),
 	}
 	for _, g := range groups {
 		if !pathExist(g) {
 			p := UserName + ":" + UserName
-			cmd := fmt.Sprintf("sudo cgcreate -t %s -a %s -g memory,cpu,freezer:%s", p, p, baseCGDir)
+			cmd := fmt.Sprintf("sudo cgcreate -t %s -a %s -g memory,cpu,freezer:%s", p, p, rootCGroup)
 			return fmt.Errorf("Please execute %q before running the sched program", cmd)
 		}
 	}
@@ -134,18 +136,17 @@ func ToLines(v []byte, hasErr error) []string {
 }
 
 func ReadCGroupFile(ctrl string, name string, key string) ([]byte, error) {
-	return ioutil.ReadFile(path.Join(rootCGroup, ctrl, name, key))
+	return ioutil.ReadFile(JoinCGPath(ctrl, name, key))
 }
 
-func FreezeUIApps() error {
-	return WriteCGroupFile(freezerCtrl, baseCGDir, "freezer.state", "FROZEN")
+func FreezeUIApps(cgroup string) error {
+	return WriteCGroupFile(freezerCtrl, cgroup, "freezer.state", "FROZEN")
 }
-func THAWEDUIApps() error {
-	return WriteCGroupFile(freezerCtrl, baseCGDir, "freezer.state", "THAWED")
+func THAWEDUIApps(cgroup string) error {
+	return WriteCGroupFile(freezerCtrl, cgroup, "freezer.state", "THAWED")
 }
-
 func WriteCGroupFile(ctrl string, name string, key string, value interface{}) error {
-	fpath := path.Join(rootCGroup, ctrl, name, key)
+	fpath := JoinCGPath(ctrl, name, key)
 	return ioutil.WriteFile(fpath, []byte(fmt.Sprintf("%v", value)), 0777)
 }
 
@@ -161,5 +162,5 @@ func CGroupPIDs(ctrl string, name string) []int {
 }
 
 func SetLimitRSS(cgroup string, v uint64) error {
-	return WriteCGroupFile(memoryCtrl, cgroup, "memory.limit_in_bytes", v)
+	return WriteCGroupFile(memoryCtrl, cgroup, "memory.soft_limit_in_bytes", v)
 }

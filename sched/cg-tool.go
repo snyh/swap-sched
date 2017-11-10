@@ -72,19 +72,13 @@ func _Command(c string, args ...string) *exec.Cmd {
 }
 
 func CGCreate(ctrl string, path string) error {
-	p := UserName + ":" + UserName
-	return _Command("cgcreate",
-		"-t", p,
-		"-a", p,
-		"-g", ctrl+":"+path,
-	).Run()
+	return os.MkdirAll(JoinCGPath(ctrl, path), 0700)
 }
-
 func CGDelete(ctrl string, path string) error {
-	return _Command("cgdelete", "-r", "-g", ctrl+":"+path).Run()
+	return os.Remove(JoinCGPath(ctrl, path))
 }
-
 func CGExec(ctrl string, path string, cmd string) error {
+	// TODO remove cgexec by fork and exec
 	return _Command("cgexec", "-g", ctrl+":"+path, cmd).Run()
 }
 
@@ -122,6 +116,7 @@ func ToUint64(v []byte, hasErr error) uint64 {
 	ret, _ := strconv.ParseUint(strings.TrimSpace(string(v)), 10, 64)
 	return ret
 }
+
 func ToLines(v []byte, hasErr error) []string {
 	if hasErr != nil {
 		return nil

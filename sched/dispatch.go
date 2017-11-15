@@ -45,14 +45,15 @@ func (d *Dispatcher) Run(cmd string) error {
 	if err != nil {
 		return err
 	}
-	d.addApps(app)
-	return app.Run()
+	return d.addApps(app)
 }
 
-func (d *Dispatcher) addApps(app *UIApp) {
+func (d *Dispatcher) addApps(app *UIApp) error {
 	d.Lock()
 	d.inactiveApps = append(d.inactiveApps, app)
+	err := app.Run()
 	d.Unlock()
+	return err
 }
 
 func (d *Dispatcher) ActiveWindowHanlder(pid int, xid int) {

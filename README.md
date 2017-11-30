@@ -1,3 +1,11 @@
+# 集成状态(DDE)
+- https://cr.deepin.io/#/c/28400/
+- https://cr.deepin.io/#/c/28389/
+- https://cr.deepin.io/#/c/28490/
+- https://cr.deepin.io/#/c/28516/
+- https://cr.deepin.io/#/c/28389/
+
+
 # 问题描述
 当UI App + DE 组件已经超过物理内存大小，开始频繁使用swap时，在kernel角度来看，UI App与非UI App的优先级是一致的，因此会尽量满足所有进程的资源需求，导致频繁的将UI App的page向swap写入/读取。
 

@@ -1,0 +1,2 @@
+#!/bin/bash
+stress -m 2 --timeout 2 --vm-keep -q 2> /dev/null

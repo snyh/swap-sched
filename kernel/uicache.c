@@ -7,6 +7,9 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
+#include <linux/kprobes.h>
+#include <linux/ptrace.h>
+
 #define _fmt(fmt) KERN_ERR""KBUILD_MODNAME ": " fmt
 
 #define MAX_COUNT 100
@@ -60,6 +63,7 @@ static struct data_item* create_data_item(pgoff_t offset, void* d)
 int uicache_pool_insert(struct uicache_pool *p, pgoff_t offset, struct page *page)
 {
   struct data_item *d = NULL, *i = NULL;
+  void *s = 0;
 
   BUG_ON(!p);
 
@@ -76,7 +80,7 @@ int uicache_pool_insert(struct uicache_pool *p, pgoff_t offset, struct page *pag
     }
   }
 
-  void * s = kmap_atomic(page);
+  s = kmap_atomic(page);
   i = create_data_item(offset, s);
   list_add(&p->items, &(i->list));
   p->count++;
@@ -135,6 +139,9 @@ static int uicache_frontswap_store(unsigned type, pgoff_t offset,
     return -1;
   }
 
+  // if page->mem_cg is not in range then return -1;
+  // if index(page) is not in hint then return -1;
+
   ret = uicache_pool_insert(p, offset, page);
   printk(_fmt("uicache_frontswap_store %p %d %ld %p RET:%d\n"), p, type, offset, page, ret);
   return ret;
@@ -143,11 +150,12 @@ static int uicache_frontswap_store(unsigned type, pgoff_t offset,
 static int uicache_frontswap_load(unsigned type, pgoff_t offset,
 				struct page *page)
 {
+  int ret = -1;
   struct uicache_pool *p = find_pool(page);
   if (!p) {
     return -1;
   }
-  int ret = uicache_pool_get(p, offset, page);
+  ret = uicache_pool_get(p, offset, page);
   printk(_fmt("uicache_frontswap_load %p %d %ld %p RET:%d\n"), p, type, offset, page, ret);
   return ret;
 }
@@ -216,7 +224,6 @@ static int uicache_cleancache_init_shared_fs(char *uuid, size_t pagesize)
   return 0;
 }
 
-
 static struct cleancache_ops uicache_cleancache_ops = {
     .put_page = uicache_cleancache_put_page,
     .get_page = uicache_cleancache_get_page,
@@ -227,19 +234,72 @@ static struct cleancache_ops uicache_cleancache_ops = {
     .init_fs = uicache_cleancache_init_fs
 };
 
+static void jprobe_mem_cgroup_commit_charge(struct page *page,
+                        struct mem_cgroup *memcg,
+                        bool lrucare, bool compound)
+{
+  unsigned short cgid = 0;
+  unsigned long pfn = page_to_pfn(page);
+
+  if (memcg) {
+    cgid = mem_cgroup_id(memcg);
+  }
+
+  /* if (update_validiton(pfn, cgid)) { */
+  /* } */
+
+  if (cgid == 0 || compound || (current->mm == 0)) {
+    goto end;
+  }
+
+  printk("huhu4... %p(%ld) %d %d %d\n", page, pfn, cgid, lrucare, current->pid);
+ end:
+  jprobe_return();
+}
+
+static struct jprobe pp = {
+  .kp = {
+    .symbol_name = "mem_cgroup_commit_charge",
+    //    .addr = (kprobe_opcode_t *) 0xffffffffb55f9470,
+  },
+  .entry = (kprobe_opcode_t *) jprobe_mem_cgroup_commit_charge,
+};
+
+
+static int init_kprobe(void)
+{
+  int ret = -1;
+  ret = register_jprobe(&pp);
+  if (ret < 0) {
+        printk(KERN_INFO "register_jprobe failed, returned %d\n",
+                ret);
+        return -1;
+  }
+  disable_kprobe(&pp.kp);
+  enable_kprobe(&pp.kp);
+  return 0;
+}
+static void exit_kprobe(void)
+{
+  unregister_jprobe(&pp);
+}
+
+
 static int uicache_init(void)
 {
   _p_ = create_uicache_pool(1);
   printk(_fmt("uicache_init %p\n"), _p_);
-  frontswap_register_ops(&uicache_frontswap_ops);
 
   if (0) {
+    frontswap_register_ops(&uicache_frontswap_ops);
     cleancache_register_ops(&uicache_cleancache_ops);
   }
-  return 0;
+  return init_kprobe();
 }
+
 static void uicache_exit(void)
 {
+  exit_kprobe();
 }
 
 module_init(uicache_init);

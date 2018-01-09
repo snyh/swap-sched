@@ -4,7 +4,6 @@ sudo cgcreate -g memory:/333
 echo 100000000 | sudo tee /sys/fs/cgroup/memory/333/memory.limit_in_bytes
 
 sudo dmesg -C
-sudo cgexec -g memory:/333 stress -m 1 --timeout 10 --vm-keep --vm-stride 3000 #-q 2> /dev/null
+sudo cgexec -g memory:/333 stress -m 1 --timeout 1 --vm-keep --vm-stride 3000 #-q 2> /dev/null
 #sudo cgexec -g memory:/333 find / > /dev/null
-sleep 1
-sudo dmesg
+sudo dmesg | grep load | wc

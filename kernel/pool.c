@@ -75,6 +75,7 @@ static pool_val_t* _uicache_pool_new(pool_key_t k)
 int uicache_pool_store(pool_key_t k, struct page *page)
 {
   pool_val_t *i;
+  u8 *src;
   if (atomic_read(&_current_page_) > MAX_PAGES) {
     return -ENOMEM;
   }
@@ -87,7 +88,9 @@ int uicache_pool_store(pool_key_t k, struct page *page)
     }
   }
   spin_lock(&_uicache_pool_lock);
-  memcpy(i->data, kmap_atomic(page), PAGE_SIZE);
+  src = kmap_atomic(page);
+  memcpy(i->data, src, PAGE_SIZE);
+  kunmap_atomic(src);
   spin_unlock(&_uicache_pool_lock);
   return 0;
 }
@@ -95,12 +98,15 @@ int uicache_pool_store(pool_key_t k, struct page *page)
 int uicache_pool_load(pool_key_t k, struct page *page)
 {
   pool_val_t *i;
+  u8 *dst;
   i = uicache_pool_find(k);
   if (!i) {
     return -1;
   }
   spin_lock(&_uicache_pool_lock);
-  memcpy(kmap_atomic(page), i->data, PAGE_SIZE);
+  dst = kmap_atomic(page);
+  memcpy(dst, i->data, PAGE_SIZE);
+  kunmap_atomic(dst);
   spin_unlock(&_uicache_pool_lock);
   // TODO: add priority of this page in pg
   return 0;
@@ -123,6 +129,8 @@ static void uicache_pool_delete(pool_key_t k)
   spin_lock(&_uicache_pool_lock);
   _uicache_pool_delete(i);
   spin_unlock(&_uicache_pool_lock);
+
+  printk("uicache_pool_delete %d %ld\n", k.type, k.offset);
 }
 
 void uicache_pool_delete_all(pool_key_t k)

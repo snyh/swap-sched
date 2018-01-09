@@ -58,7 +58,6 @@ static void uicache_frontswap_invalidate_page(unsigned type, pgoff_t offset)
     .type = type,
     .offset = offset,
   };
-  printk("uicache delete %d %ld\n", type, offset);
   uicache_pool_delete(t);
 }
 

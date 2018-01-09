@@ -16,7 +16,7 @@ static void _hook_for_recording_pagefault(struct page *page,
     goto end;
   }
 
-  pg_inc(pg, page_to_pfn(page));
+  pg_inc(pg, page_key(page));
 
  end:
   jprobe_return();

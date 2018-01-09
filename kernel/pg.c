@@ -3,6 +3,12 @@
 #define INIT_PAGE_COUNT_VALUE  10
 #define MAX_CGROUP_PATH_SIZE 128
 
+
+u64 page_key(struct page *p)
+{
+  return (u64)page_to_pfn(p);
+}
+
 struct page_kv_counts {
   struct list_head list;
   u64 k;
@@ -160,11 +166,11 @@ static int show_proc_content(struct seq_file *filp, void *p)
     pos = 0;
     seq_printf(filp, "hhh %s(%p) Count:%d\n", g->mcg_id, g, g->count);
     list_for_each_entry(i, &(g->pages), list) {
-      if (pos % 10 == 0) {
+      if (pos % 5 == 0) {
         seq_putc(filp, '\n');
       }
       pos++;
-      seq_printf(filp, "%lld: %d ", i->k, i->v);
+      seq_printf(filp, "0x%llx: %d ", i->k, i->v);
     }
   }
   return 0;

@@ -111,12 +111,11 @@ int uicache_pool_load(pool_key_t k, struct page *page)
   kunmap_atomic(dst);
   spin_unlock(&_uicache_pool_lock);
 
-
-  WARN_ON(!page->mem_cgroup);
+  //  WARN_ON(!page->mem_cgroup);
 
   if (page->mem_cgroup) {
     printk("uicache pool load %d %ld\n", k.type, k.offset);
-    pg_inc(find_pg(page->mem_cgroup), page_to_pfn(page));
+    pg_inc(find_pg(page->mem_cgroup), page_key(page));
   }
   return 0;
 }

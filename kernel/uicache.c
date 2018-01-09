@@ -27,7 +27,7 @@ static int uicache_frontswap_store(unsigned type, pgoff_t offset,
   }
 
   pg = find_pg(page->mem_cgroup);
-  if (!pg || pg_has(pg, page_to_pfn(page))) {
+  if (!pg || pg_has(pg, page_key(page))) {
     return -1;
   }
 

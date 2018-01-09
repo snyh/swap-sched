@@ -1,2 +1,8 @@
 #!/bin/bash
-stress -m 2 --timeout 2 --vm-keep -q 2> /dev/null
+sudo cgcreate -g memory:/333
+
+echo 100000000 | sudo tee /sys/fs/cgroup/memory/333/memory.limit_in_bytes
+
+sudo cgexec -g memory:/333 stress -m 1 --timeout 10 --vm-keep --vm-stride 3000 #-q 2> /dev/null
+sleep 1
+sudo dmesg

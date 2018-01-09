@@ -15,6 +15,6 @@ clean:
 	rm modules.order
 
 test:
+	-@sudo rmmod uicache
 	sudo insmod ./uicache.ko
-	stress -m 2 --timeout 1
-	sudo dmesg | grep uicache
+	sudo dmesg | tail

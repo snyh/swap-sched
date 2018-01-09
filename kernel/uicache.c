@@ -7,172 +7,68 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
-#include <linux/kprobes.h>
-#include <linux/ptrace.h>
+#include <linux/cgroup.h>
+#include <linux/memcontrol.h>
+
+#include "./pool.c"
+#include "./pg.c"
+#include "./hook.c"
 
 #define _fmt(fmt) KERN_ERR""KBUILD_MODNAME ": " fmt
-
-#define MAX_COUNT 100
-
-struct data_item {
-  struct list_head list;
-  pgoff_t index;
-  char data[PAGE_SIZE];
-};
-
-struct uicache_pool {
-  unsigned short mid;
-  struct list_head items;
-  u32 count;
-  spinlock_t lock;
-};
-
-static struct uicache_pool *_p_ = NULL;
-
-static struct uicache_pool* create_uicache_pool(unsigned short mid)
-{
-  struct uicache_pool *pool = 0;
-  pool = kzalloc(sizeof(*pool), GFP_KERNEL);
-  pool->items.next = &(pool->items);
-  pool->items.prev = &(pool->items);
-  pool->mid = mid;
-  spin_lock_init(&pool->lock);
-  return pool;
-}
-
-static struct uicache_pool* find_pool(struct page* page)
-{
-  return _p_;
-}
-
-static void destroy_data_item(struct data_item *i)
-{
-  kfree(i);
-}
-static struct data_item* create_data_item(pgoff_t offset, void* d)
-{
-  struct data_item* i = 0;
-  i = kzalloc(sizeof(*i), GFP_ATOMIC);
-  BUG_ON(!i);
-  i->index = offset;
-  INIT_LIST_HEAD(&i->list);
-  memcpy(&(i->data), d, PAGE_SIZE);
-  return i;
-}
-
-int uicache_pool_insert(struct uicache_pool *p, pgoff_t offset, struct page *page)
-{
-  struct data_item *d = NULL, *i = NULL;
-  void *s = 0;
-
-  BUG_ON(!p);
-
-  spin_lock(&p->lock);
-  if (p->count >= MAX_COUNT) {
-    spin_unlock(&p->lock);
-    return -1;
-  }
-
-  list_for_each_entry(d, &p->items, list) {
-    if (d->index == offset) {
-      spin_unlock(&p->lock);
-      return 0;
-    }
-  }
-
-  s = kmap_atomic(page);
-  i = create_data_item(offset, s);
-  list_add(&p->items, &(i->list));
-  p->count++;
-  spin_unlock(&p->lock);
-  return 0;
-}
-
-int uicache_pool_get(struct uicache_pool *p, pgoff_t offset, struct page *page)
-{
-  struct data_item *d = NULL;
-
-  BUG_ON(!p);
-
-  spin_lock(&p->lock);
-
-  list_for_each_entry(d, &p->items, list) {
-    if (d->index == offset) {
-      printk(_fmt("uicache fetch %ld\n"), offset);
-      memcpy(kmap_atomic(page), &(d->data), PAGE_SIZE);
-      spin_unlock(&p->lock);
-      return 0;
-    }
-  }
-  spin_unlock(&p->lock);
-  return -1;
-}
-
-int uicache_pool_delete(struct uicache_pool *p, pgoff_t offset)
-{
-  struct data_item *d = NULL, *i=0;
-
-  BUG_ON(!p);
-
-  spin_lock(&p->lock);
-
-  list_for_each_entry_safe(d, i, &p->items, list) {
-    if (d->index == offset) {
-      printk(_fmt("uicache delete %ld\n"), offset);
-      list_del(&d->list);
-      destroy_data_item(d);
-      p->count--;
-      spin_unlock(&p->lock);
-      return 0;
-    }
-  }
-  spin_unlock(&p->lock);
-  return -1;
-}
 
 static int uicache_frontswap_store(unsigned type, pgoff_t offset,
 				struct page *page)
 {
-  int ret = -1;
-  struct uicache_pool *p = find_pool(page);
-  if (!p) {
+  struct page_group *pg;
+  pool_key_t t;
+
+  if (!page->mem_cgroup) {
     return -1;
   }
 
-  // if page->mem_cg is not in range then return -1;
-  // if index(page) is not in hint then return -1;
+  pg = find_pg(page->mem_cgroup);
+  if (!pg || pg_has(pg, page_to_pfn(page))) {
+    return -1;
+  }
 
-  ret = uicache_pool_insert(p, offset, page);
-  printk(_fmt("uicache_frontswap_store %p %d %ld %p RET:%d\n"), p, type, offset, page, ret);
-  return ret;
+  t.type = type;
+  t.offset = offset;
+
+  printk("uicache store %d %ld\n", type, offset);
+  return uicache_pool_store(t, page);
 }
 
 static int uicache_frontswap_load(unsigned type, pgoff_t offset,
 				struct page *page)
 {
   int ret = -1;
-  struct uicache_pool *p = find_pool(page);
-  if (!p) {
-    return -1;
-  }
-  ret = uicache_pool_get(p, offset, page);
-  printk(_fmt("uicache_frontswap_load %p %d %ld %p RET:%d\n"), p, type, offset, page, ret);
+  pool_key_t t = {
+    .type = type,
+    .offset = offset,
+  };
+  ret = uicache_pool_load(t, page);
+  BUG_ON(ret!=0);
+  printk("uicache load %d %ld %d\n", type, offset, ret);
   return ret;
 }
 
 static void uicache_frontswap_invalidate_page(unsigned type, pgoff_t offset)
 {
-  struct uicache_pool *p = find_pool(0);
-  if (!p) {
-    return;
-  }
-  uicache_pool_delete(p, offset);
+  pool_key_t t = {
+    .type = type,
+    .offset = offset,
+  };
+  printk("uicache delete %d %ld\n", type, offset);
+  uicache_pool_delete(t);
 }
 
 static void uicache_frontswap_invalidate_area(unsigned type)
 {
+  pool_key_t t = {
+    .type = type,
+  };
+  uicache_pool_delete_all(t);
   printk(_fmt("uicache try invalidating area of %d\n"), type);
-  return;
 }
 
 static void uicache_frontswap_init(unsigned type)
@@ -234,72 +130,39 @@ static struct cleancache_ops uicache_cleancache_ops = {
     .init_fs = uicache_cleancache_init_fs
 };
 
-static void jprobe_mem_cgroup_commit_charge(struct page *page,
-                        struct mem_cgroup *memcg,
-                        bool lrucare, bool compound)
-{
-  unsigned short cgid = 0;
-  unsigned long pfn = page_to_pfn(page);
-
-  if (memcg) {
-    cgid = mem_cgroup_id(memcg);
-  }
-
-  /* if (update_validiton(pfn, cgid)) { */
-  /* } */
-
-  if (cgid == 0 || compound || (current->mm == 0)) {
-    goto end;
-  }
-
-  printk("huhu4... %p(%ld) %d %d %d\n", page, pfn, cgid, lrucare, current->pid);
- end:
-  jprobe_return();
-}
-
-static struct jprobe pp = {
-  .kp = {
-    .symbol_name = "mem_cgroup_commit_charge",
-    //    .addr = (kprobe_opcode_t *) 0xffffffffb55f9470,
-  },
-  .entry = (kprobe_opcode_t *) jprobe_mem_cgroup_commit_charge,
-};
-
-
-static int init_kprobe(void)
-{
-  int ret = -1;
-  ret = register_jprobe(&pp);
-  if (ret < 0) {
-        printk(KERN_INFO "register_jprobe failed, returned %d\n",
-                ret);
-        return -1;
-  }
-  disable_kprobe(&pp.kp);
-  enable_kprobe(&pp.kp);
-  return 0;
-}
-static void exit_kprobe(void)
-{
-  unregister_jprobe(&pp);
-}
-
-
 static int uicache_init(void)
 {
-  _p_ = create_uicache_pool(1);
-  printk(_fmt("uicache_init %p\n"), _p_);
+  int ret;
+  printk(_fmt("uicache_init1\n"));
 
   if (0) {
-    frontswap_register_ops(&uicache_frontswap_ops);
     cleancache_register_ops(&uicache_cleancache_ops);
   }
-  return init_kprobe();
+  if (1) {
+    ret = init_hook();
+    if (ret) {
+      return ret;
+    }
+
+    ret = init_proc();
+    if (ret) {
+      return ret;
+    }
+
+    begin_monitor("/333", 1000);
+    frontswap_register_ops(&uicache_frontswap_ops);
+  }
+  return 0;
 }
 
 static void uicache_exit(void)
 {
-  exit_kprobe();
+  exit_proc();
+  exit_hook();
+
+  if (0) {
+    stop_monitor("/333");
+  }
 }
 
 module_init(uicache_init);

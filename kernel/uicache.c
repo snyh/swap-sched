@@ -139,6 +139,8 @@ static int uicache_init(void)
     cleancache_register_ops(&uicache_cleancache_ops);
   }
   if (1) {
+    pool_init();
+
     ret = init_hook();
     if (ret) {
       return ret;
@@ -159,6 +161,7 @@ static void uicache_exit(void)
 {
   exit_proc();
   exit_hook();
+  exit_pool();
 
   if (0) {
     stop_monitor("/333");

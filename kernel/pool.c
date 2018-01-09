@@ -2,6 +2,9 @@
 #include <linux/atomic.h>
 #include <linux/spinlock.h>
 
+struct kmem_cache *_mem_pool;
+
+
 #define MAX_PAGES (100 * 1024 * 1024 / PAGE_SIZE) // 最多使用100 MB 空间来存储page
 
 static atomic_t _current_page_ = ATOMIC_INIT(0);
@@ -20,6 +23,18 @@ typedef struct uicache_pool_value {
   pool_key_t key;
   char data[PAGE_SIZE];
 } pool_val_t;
+
+void pool_init(void)
+{
+  _mem_pool = kmem_cache_create("uicache",
+                                sizeof(struct uicache_pool_value),
+                                0, SLAB_PANIC,
+                                NULL);
+}
+void exit_pool(void)
+{
+  kmem_cache_destroy(_mem_pool);
+}
 
 inline static bool _key_equal(pool_key_t a, pool_key_t b)
 {
@@ -43,7 +58,7 @@ pool_val_t* uicache_pool_find(pool_key_t k)
 static pool_val_t* _uicache_pool_new(pool_key_t k)
 {
   pool_val_t *v;
-  v = kmalloc(sizeof(*v), GFP_ATOMIC);
+  v = kmem_cache_alloc(_mem_pool, GFP_ATOMIC);
   if (!v) {
     return NULL;
   }
@@ -94,7 +109,7 @@ int uicache_pool_load(pool_key_t k, struct page *page)
 static void _uicache_pool_delete(pool_val_t* i)
 {
   list_del(&(i->list));
-  kfree(i);
+  kmem_cache_free(_mem_pool, i);
   atomic_dec(&_current_page_);
 }
 

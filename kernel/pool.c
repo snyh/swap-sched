@@ -21,7 +21,7 @@ typedef struct uicache_pool_key {
 typedef struct uicache_pool_value {
   struct list_head list;
   pool_key_t key;
-  char data[PAGE_SIZE];
+  u8 data[PAGE_SIZE];
 } pool_val_t;
 
 void pool_init(void)

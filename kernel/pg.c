@@ -73,9 +73,11 @@ bool pg_has(struct page_group* g, u64 k)
 void pg_inc(struct page_group* g, u64 k)
 {
   struct page_kv_counts *i, *tmp, *next;
+  if (!g) {
+    return;
+  }
 
   mutex_lock(&(g->lock));
-
   list_for_each_entry_safe(i, tmp, &(g->pages), list) {
     if (i->k == k) {
       i->v++;

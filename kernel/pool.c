@@ -87,6 +87,7 @@ int uicache_pool_store(pool_key_t k, struct page *page)
       return -ENOMEM;
     }
   }
+
   spin_lock(&_uicache_pool_lock);
   src = kmap_atomic(page);
   memcpy(i->data, src, PAGE_SIZE);
@@ -101,6 +102,7 @@ int uicache_pool_load(pool_key_t k, struct page *page)
   u8 *dst;
   i = uicache_pool_find(k);
   if (!i) {
+    printk("not found... %ld\n", k.offset);
     return -1;
   }
   spin_lock(&_uicache_pool_lock);
@@ -108,7 +110,14 @@ int uicache_pool_load(pool_key_t k, struct page *page)
   memcpy(dst, i->data, PAGE_SIZE);
   kunmap_atomic(dst);
   spin_unlock(&_uicache_pool_lock);
-  // TODO: add priority of this page in pg
+
+
+  WARN_ON(!page->mem_cgroup);
+
+  if (page->mem_cgroup) {
+    printk("uicache pool load %d %ld\n", k.type, k.offset);
+    pg_inc(find_pg(page->mem_cgroup), page_to_pfn(page));
+  }
   return 0;
 }
 
@@ -129,8 +138,6 @@ static void uicache_pool_delete(pool_key_t k)
   spin_lock(&_uicache_pool_lock);
   _uicache_pool_delete(i);
   spin_unlock(&_uicache_pool_lock);
-
-  printk("uicache_pool_delete %d %ld\n", k.type, k.offset);
 }
 
 void uicache_pool_delete_all(pool_key_t k)

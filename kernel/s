@@ -1,9 +1,18 @@
 #!/bin/bash
-sudo cgcreate -g memory:/333
+name=vagrant
+
+sudo cgcreate -g memory:/333 -t $name:$name -a $name:$name
+
+sudo cgcreate -g memory:/444 -t $name:$name -a $name:$name
 
 echo 100000000 | sudo tee /sys/fs/cgroup/memory/333/memory.limit_in_bytes
+echo 100000000 | sudo tee /sys/fs/cgroup/memory/444/memory.limit_in_bytes
 
 sudo dmesg -C
-sudo cgexec -g memory:/333 stress -m 1 --timeout 1 --vm-keep --vm-stride 3000 #-q 2> /dev/null
-#sudo cgexec -g memory:/333 find / > /dev/null
-sudo dmesg | grep load | wc
+echo "Under CGROUP"
+/usr/bin/time -p cgexec -g memory:/333 stress -m 1 --timeout 5 --vm-keep -q --vm-bytes 110000000
+
+echo "Under Normal"
+/usr/bin/time -p cgexec -g memory:/444 stress -m 1 --timeout 5 --vm-keep -q --vm-bytes 110000000
+
+sudo dmesg

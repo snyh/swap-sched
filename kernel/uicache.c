@@ -10,8 +10,8 @@
 #include <linux/cgroup.h>
 #include <linux/memcontrol.h>
 
-#include "./pool.c"
 #include "./pg.c"
+#include "./pool.c"
 #include "./hook.c"
 
 #define _fmt(fmt) KERN_ERR""KBUILD_MODNAME ": " fmt
@@ -34,7 +34,6 @@ static int uicache_frontswap_store(unsigned type, pgoff_t offset,
   t.type = type;
   t.offset = offset;
 
-  printk("uicache store %d %ld\n", type, offset);
   return uicache_pool_store(t, page);
 }
 
@@ -48,7 +47,7 @@ static int uicache_frontswap_load(unsigned type, pgoff_t offset,
   };
   ret = uicache_pool_load(t, page);
   WARN_ON(ret!=0);
-  printk("uicache load %d %ld %d\n", type, offset, ret);
+
   return ret;
 }
 

@@ -12,7 +12,7 @@ struct kmem_cache *_mem_pool;
 
 #define MAX_PAGES (100 * 1024 * 1024 / PAGE_SIZE) // 最多使用100 MB 空间来存储page
 
-static atomic_t _current_page_ = ATOMIC_INIT(0);
+static atomic_t _uicache_stored_page_ = ATOMIC_INIT(0);
 
 #define HASHSIZE sizeof(u64)
 
@@ -35,6 +35,7 @@ void exit_pool(void)
 static pool_val_t* _uicache_pool_find(pool_key_t k)
 {
   pool_val_t *i;
+  assert_spin_locked(&_uicache_pool_lock);
 
   hash_for_each_possible(uicache_hash, i, list, k.offset) {
     if (i->key.type == k.type) {
@@ -47,24 +48,34 @@ static pool_val_t* _uicache_pool_find(pool_key_t k)
 static pool_val_t* _uicache_pool_new(pool_key_t k)
 {
   pool_val_t *v;
+  assert_spin_locked(&_uicache_pool_lock);
+
   v = kmem_cache_alloc(_mem_pool, GFP_ATOMIC);
   if (!v) {
     return NULL;
   }
 
   v->key = k;
-  atomic_inc(&_current_page_);
+  atomic_inc(&_uicache_stored_page_);
 
   hash_add(uicache_hash, &(v->list), k.offset);
   return v;
+}
+
+static void _uicache_pool_delete(pool_val_t* i)
+{
+  assert_spin_locked(&_uicache_pool_lock);
+  hash_del(&(i->list));
+  kmem_cache_free(_mem_pool, i);
+  atomic_dec(&_uicache_stored_page_);
 }
 
 int uicache_pool_store(pool_key_t k, struct page *page)
 {
   pool_val_t *i;
   u8 *src;
-  if (atomic_read(&_current_page_) > MAX_PAGES) {
-    return -ENOMEM;
+  if (atomic_read(&_uicache_stored_page_) > MAX_PAGES) {
+    return -ENOSPC;
   }
 
   spin_lock(&_uicache_pool_lock);
@@ -108,13 +119,6 @@ int uicache_pool_load(pool_key_t k, struct page *page)
     pg_inc(find_pg(page->mem_cgroup), page_key(page));
   }
   return 0;
-}
-
-static void _uicache_pool_delete(pool_val_t* i)
-{
-  hash_del(&(i->list));
-  kmem_cache_free(_mem_pool, i);
-  atomic_dec(&_current_page_);
 }
 
 void uicache_pool_delete(pool_key_t k)

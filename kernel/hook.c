@@ -25,9 +25,7 @@ static void _hook_for_recording_pagefault(struct page *page,
 }
 
 static struct jprobe pp = {
-  .kp = {
-    .symbol_name = "mem_cgroup_commit_charge",
-  },
+  .kp.symbol_name = "mem_cgroup_commit_charge",
   .entry = (kprobe_opcode_t *) _hook_for_recording_pagefault,
 };
 

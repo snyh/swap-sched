@@ -169,7 +169,8 @@ static int show_proc_content(struct seq_file *filp, void *p)
   int pos = 0;
   list_for_each_entry(g,  &all_pg, list) {
     pos = 0;
-    seq_printf(filp, "hhh %s(%p) Count:%d\n", g->mcg_id, g, g->count);
+    seq_printf(filp, "hhh %s(%p) Count:%d Stored:%d\n", g->mcg_id, g, g->count,
+               atomic_read(&_uicache_stored_page_));
     list_for_each_entry(i, &(g->pages), list) {
       if (pos % 5 == 0) {
         seq_putc(filp, '\n');

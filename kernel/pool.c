@@ -36,14 +36,11 @@ static pool_val_t* _uicache_pool_find(pool_key_t k)
 {
   pool_val_t *i;
 
-  spin_lock(&_uicache_pool_lock);
   hash_for_each_possible(uicache_hash, i, list, k.offset) {
     if (i->key.type == k.type) {
-      spin_unlock(&_uicache_pool_lock);
       return i;
     }
   }
-  spin_unlock(&_uicache_pool_lock);
   return NULL;
 }
 
@@ -58,9 +55,7 @@ static pool_val_t* _uicache_pool_new(pool_key_t k)
   v->key = k;
   atomic_inc(&_current_page_);
 
-  spin_lock(&_uicache_pool_lock);
   hash_add(uicache_hash, &(v->list), k.offset);
-  spin_unlock(&_uicache_pool_lock);
   return v;
 }
 
@@ -72,15 +67,16 @@ int uicache_pool_store(pool_key_t k, struct page *page)
     return -ENOMEM;
   }
 
+  spin_lock(&_uicache_pool_lock);
   i = _uicache_pool_find(k);
   if (!i) {
     i = _uicache_pool_new(k);
     if (!i) {
+      spin_unlock(&_uicache_pool_lock);
       return -ENOMEM;
     }
   }
 
-  spin_lock(&_uicache_pool_lock);
   src = kmap_atomic(page);
   memcpy(i->data, src, PAGE_SIZE);
   kunmap_atomic(src);
@@ -92,12 +88,14 @@ int uicache_pool_load(pool_key_t k, struct page *page)
 {
   pool_val_t *i;
   u8 *dst;
+
+  spin_lock(&_uicache_pool_lock);
   i = _uicache_pool_find(k);
   if (!i) {
+    spin_unlock(&_uicache_pool_lock);
     printk("not found... %ld\n", k.offset);
     return -1;
   }
-  spin_lock(&_uicache_pool_lock);
   dst = kmap_atomic(page);
   memcpy(dst, i->data, PAGE_SIZE);
   kunmap_atomic(dst);
@@ -122,11 +120,13 @@ static void _uicache_pool_delete(pool_val_t* i)
 void uicache_pool_delete(pool_key_t k)
 {
   pool_val_t *i;
+
+  spin_lock(&_uicache_pool_lock);
   i = _uicache_pool_find(k);
   if (!i) {
+    spin_unlock(&_uicache_pool_lock);
     return;
   }
-  spin_lock(&_uicache_pool_lock);
   _uicache_pool_delete(i);
   spin_unlock(&_uicache_pool_lock);
 }

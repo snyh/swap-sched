@@ -1,5 +1,6 @@
 #!/bin/bash
 name=vagrant
+TIMEOUT=5
 
 sudo cgcreate -g memory:/333 -t $name:$name -a $name:$name
 
@@ -10,9 +11,7 @@ echo 100000000 | sudo tee /sys/fs/cgroup/memory/444/memory.limit_in_bytes
 
 sudo dmesg -C
 echo "Under CGROUP"
-/usr/bin/time -p cgexec -g memory:/333 stress -m 1 --timeout 5 --vm-keep -q --vm-bytes 110000000
+sudo perf stat cgexec -g memory:/333 stress -m 1 --timeout $TIMEOUT --vm-keep -q --vm-bytes 110000000
 
 echo "Under Normal"
-/usr/bin/time -p cgexec -g memory:/444 stress -m 1 --timeout 5 --vm-keep -q --vm-bytes 110000000
-
-sudo dmesg
+sudo perf stat cgexec -g memory:/444 stress -m 1 --timeout $TIMEOUT --vm-keep -q --vm-bytes 110000000

@@ -177,6 +177,7 @@ static int show_proc_content(struct seq_file *filp, void *p)
       pos++;
       seq_printf(filp, "0x%llx: %d ", i->k, i->v);
     }
+    seq_putc(filp, '\n');
   }
   return 0;
 }

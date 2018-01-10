@@ -22,7 +22,7 @@ typedef struct uicache_pool_key {
 } pool_key_t;
 
 typedef struct uicache_pool_value {
-  struct list_head list;
+  struct hlist_node list;
   pool_key_t key;
   u8 data[PAGE_SIZE];
 } pool_val_t;

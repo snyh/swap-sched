@@ -140,6 +140,19 @@ void pg_inc(struct page_group* g, u64 k)
   mutex_unlock(&(g->lock));
 }
 
+void pg_reduce(struct page_group *g)
+{
+  struct page_kv_counts *i, *tmp;
+  mutex_lock(&(g->lock));
+  list_for_each_entry_safe(i, tmp, &(g->pages), list) {
+    if (i->v > 0) {
+      i->v--;
+    }
+  };
+  printk("Reduce Page Group %s\n", g->mcg_id);
+  mutex_unlock(&(g->lock));
+}
+
 bool begin_monitor(const char* mcg_id, u16 capacity)
 {
   struct page_group *g;
@@ -152,6 +165,8 @@ bool begin_monitor(const char* mcg_id, u16 capacity)
     memcpy(g->mcg_id, mcg_id, sizeof(g->mcg_id));
     g->count = 0;
     list_add(&(g->list), &all_pg);
+  } else {
+    pg_reduce(g);
   }
   g->capacity = capacity;
   g->count_record = 0;

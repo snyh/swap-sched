@@ -1,4 +1,9 @@
 #include <linux/list.h>
+#include <linux/slab.h>
+#include <linux/memcontrol.h>
+#include <linux/cgroup.h>
+
+#include "pg.h"
 
 #define INIT_PAGE_COUNT_VALUE  10
 #define MAX_CGROUP_PATH_SIZE 128
@@ -50,7 +55,7 @@ const char* _parse_mcg_id(struct mem_cgroup* mc)
   return buf;
 }
 
-static struct page_group* find_pg(struct mem_cgroup* mc)
+struct page_group* find_pg(struct mem_cgroup* mc)
 {
   const char* mcg_id = _parse_mcg_id(mc);
   struct page_group *g;
@@ -111,7 +116,7 @@ void pg_inc(struct page_group* g, u64 k)
   mutex_unlock(&(g->lock));
 }
 
-static bool begin_monitor(const char* mcg_id, u16 capacity)
+bool begin_monitor(const char* mcg_id, u16 capacity)
 {
   struct page_group *i;
   i = kmalloc(sizeof(*i), GFP_KERNEL);
@@ -141,7 +146,7 @@ static void _destroy_page_group(struct page_group* g)
   kfree(g);
 }
 
-static bool stop_monitor(const char* mcg_id)
+bool stop_monitor(const char* mcg_id)
 {
   struct page_group *g, *t;
   list_for_each_entry_safe(g, t, &all_pg, list) {

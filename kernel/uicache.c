@@ -7,12 +7,11 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
-#include <linux/cgroup.h>
-#include <linux/memcontrol.h>
+#include "pg.h"
 
-#include "./pg.c"
-#include "./pool.c"
-#include "./hook.c"
+#include "pool.c"
+#include "pg.c"
+#include "hook.c"
 
 #define _fmt(fmt) KERN_ERR""KBUILD_MODNAME ": " fmt
 
@@ -136,22 +135,21 @@ static int uicache_init(void)
   if (0) {
     cleancache_register_ops(&uicache_cleancache_ops);
   }
-  if (1) {
-    pool_init();
 
-    ret = init_hook();
-    if (ret) {
-      return ret;
-    }
+  pool_init();
 
-    ret = init_proc();
-    if (ret) {
-      return ret;
-    }
-
-    begin_monitor("/333", 1000);
-    frontswap_register_ops(&uicache_frontswap_ops);
+  ret = init_hook();
+  if (ret) {
+    return ret;
   }
+
+  ret = init_proc();
+  if (ret) {
+    return ret;
+  }
+
+  begin_monitor("/333", 1000);
+  frontswap_register_ops(&uicache_frontswap_ops);
   return 0;
 }
 
@@ -161,9 +159,7 @@ static void uicache_exit(void)
   exit_hook();
   exit_pool();
 
-  if (0) {
-    stop_monitor("/333");
-  }
+  stop_monitor("/333");
 }
 
 module_init(uicache_init);

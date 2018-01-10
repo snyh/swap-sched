@@ -1,3 +1,5 @@
+#include "pg.h"
+
 #include <linux/kprobes.h>
 #include <linux/ptrace.h>
 
@@ -29,7 +31,7 @@ static struct jprobe pp = {
   .entry = (kprobe_opcode_t *) _hook_for_recording_pagefault,
 };
 
-static int init_hook(void)
+int init_hook()
 {
   int ret = -1;
   ret = register_jprobe(&pp);
@@ -43,7 +45,7 @@ static int init_hook(void)
   return 0;
 }
 
-static void exit_hook(void)
+void exit_hook()
 {
   unregister_jprobe(&pp);
 }

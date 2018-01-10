@@ -1,6 +1,11 @@
+#include <linux/mm.h>
+#include <linux/highmem.h>
 #include <linux/mm_types.h>
 #include <linux/atomic.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
+
+#include "pg.h"
 
 struct kmem_cache *_mem_pool;
 
@@ -12,17 +17,6 @@ static atomic_t _current_page_ = ATOMIC_INIT(0);
 LIST_HEAD(uicache_pool);
 
 static DEFINE_SPINLOCK(_uicache_pool_lock);
-
-typedef struct uicache_pool_key {
-  unsigned type;
-  pgoff_t offset;
-} pool_key_t;
-
-typedef struct uicache_pool_value {
-  struct list_head list;
-  pool_key_t key;
-  u8 data[PAGE_SIZE];
-} pool_val_t;
 
 void pool_init(void)
 {
@@ -127,7 +121,7 @@ static void _uicache_pool_delete(pool_val_t* i)
   atomic_dec(&_current_page_);
 }
 
-static void uicache_pool_delete(pool_key_t k)
+void uicache_pool_delete(pool_key_t k)
 {
   pool_val_t *i;
   i = uicache_pool_find(k);

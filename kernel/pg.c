@@ -1,4 +1,5 @@
 #include <linux/list.h>
+#include <linux/list_sort.h>
 #include <linux/slab.h>
 #include <linux/memcontrol.h>
 #include <linux/cgroup.h>
@@ -37,6 +38,14 @@ struct page_group {
 };
 
 LIST_HEAD(all_pg);
+
+int _sort_by_ascending(void* prv,
+                       struct list_head *a,
+                       struct list_head *b)
+{
+  return list_entry(a, struct page_kv_counts, list)->v
+    > list_entry(b, struct page_kv_counts, list)->v;
+}
 
 bool _pg_done(struct page_group* g)
 {
@@ -107,15 +116,13 @@ void pg_inc(struct page_group* g, u64 k)
       i->v++;
       next = list_entry(i->list.next, struct page_kv_counts, list);
       // ensure the list's value is ascending order
-      if (i->v > next->v) {
-        list_move(&(i->list), &(next->list));
-      }
       mutex_unlock(&(g->lock));
       return;
     }
   };
 
   if (_pg_full(g)) {
+    list_sort(0, &(g->pages), _sort_by_ascending);
     i = list_first_entry(&(g->pages), struct page_kv_counts, list);
     i->k = k;
     i->v = INIT_PAGE_COUNT_VALUE;

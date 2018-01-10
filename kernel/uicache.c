@@ -149,7 +149,7 @@ static int uicache_init(void)
     return ret;
   }
 
-  begin_monitor("/333", 1000);
+  begin_monitor("/333", 2500);
   frontswap_register_ops(&uicache_frontswap_ops);
   return 0;
 }

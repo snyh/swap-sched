@@ -144,23 +144,20 @@ static int uicache_init(void)
     return ret;
   }
 
-  ret = init_proc();
+  ret = init_pg();
   if (ret) {
     return ret;
   }
 
-  begin_monitor("/333", 2500);
   frontswap_register_ops(&uicache_frontswap_ops);
   return 0;
 }
 
 static void uicache_exit(void)
 {
-  exit_proc();
+  exit_pg();
   exit_hook();
   exit_pool();
-
-  stop_monitor("/333");
 }
 
 module_init(uicache_init);

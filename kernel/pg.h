@@ -37,10 +37,7 @@ int init_hook(void);
 void pool_init(void);
 void exit_pool(void);
 
-int init_proc(void);
-void exit_proc(void);
-
-bool stop_monitor(const char* mcg_id);
-bool begin_monitor(const char* mcg_id, u16 capacity);
+int init_pg(void);
+void exit_pg(void);
 
 #endif

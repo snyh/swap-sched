@@ -2,6 +2,7 @@
 name=vagrant
 TIMEOUT=5
 
+echo -n /333 | sudo tee /proc/uicache
 sudo cgcreate -g memory:/333 -t $name:$name -a $name:$name
 
 sudo cgcreate -g memory:/444 -t $name:$name -a $name:$name

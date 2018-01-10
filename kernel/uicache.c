@@ -44,6 +44,7 @@ static int uicache_frontswap_load(unsigned type, pgoff_t offset,
     .type = type,
     .offset = offset,
   };
+
   ret = uicache_pool_load(t, page);
   WARN_ON(ret!=0);
 

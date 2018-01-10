@@ -13,8 +13,6 @@ bool pg_has(struct page_group* g, u64 k);
 void pg_inc(struct page_group* g, u64 k);
 struct page_group* find_pg(struct mem_cgroup* mc);
 u64 page_key(struct page *p);
-bool pg_full(struct page_group* g);
-
 
 typedef struct uicache_pool_key {
   unsigned type;

@@ -33,11 +33,17 @@ struct page_group {
 
   u16 capacity;
   u16 count;
+  u16 count_record;
 };
 
 LIST_HEAD(all_pg);
 
-bool pg_full(struct page_group* g)
+bool _pg_done(struct page_group* g)
+{
+  return g->count_record >= g->capacity;
+}
+
+bool _pg_full(struct page_group* g)
 {
   BUG_ON(g->capacity == 0);
   return g->count >= g->capacity;
@@ -88,7 +94,14 @@ void pg_inc(struct page_group* g, u64 k)
     return;
   }
 
+  if (_pg_done(g)) {
+    return;
+  } else {
+    g->count_record++;
+  }
+
   mutex_lock(&(g->lock));
+
   list_for_each_entry_safe(i, tmp, &(g->pages), list) {
     if (i->k == k) {
       i->v++;
@@ -102,7 +115,7 @@ void pg_inc(struct page_group* g, u64 k)
     }
   };
 
-  if (pg_full(g)) {
+  if (_pg_full(g)) {
     i = list_first_entry(&(g->pages), struct page_kv_counts, list);
     i->k = k;
     i->v = INIT_PAGE_COUNT_VALUE;
@@ -169,8 +182,10 @@ static int show_proc_content(struct seq_file *filp, void *p)
   int pos = 0;
   list_for_each_entry(g,  &all_pg, list) {
     pos = 0;
-    seq_printf(filp, "hhh %s(%p) Count:%d Stored:%d\n", g->mcg_id, g, g->count,
-               atomic_read(&_uicache_stored_page_));
+    seq_printf(filp, "hhh %s(%p) Count:%d Stored:%d Done:%d\n", g->mcg_id, g, g->count,
+               atomic_read(&_uicache_stored_page_),
+               g->count_record
+               );
     list_for_each_entry(i, &(g->pages), list) {
       if (pos % 5 == 0) {
         seq_putc(filp, '\n');
@@ -179,6 +194,7 @@ static int show_proc_content(struct seq_file *filp, void *p)
       seq_printf(filp, "0x%llx: %d ", i->k, i->v);
     }
     seq_putc(filp, '\n');
+    g->count_record = 0;
   }
   return 0;
 }

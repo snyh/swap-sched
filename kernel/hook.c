@@ -14,7 +14,7 @@ static void _hook_for_recording_pagefault(struct page *page,
   }
 
   pg = find_pg(memcg);
-  if (!pg || pg_full(pg)) {
+  if (!pg) {
     goto end;
   }
 

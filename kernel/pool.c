@@ -14,11 +14,16 @@ struct kmem_cache *_mem_pool;
 
 static atomic_t _uicache_stored_page_ = ATOMIC_INIT(0);
 
-#define HASHSIZE sizeof(u64)
 
-DEFINE_HASHTABLE(uicache_hash, HASHSIZE);
+DEFINE_HASHTABLE(uicache_hash, sizeof(u64));
 
 static DEFINE_SPINLOCK(_uicache_pool_lock);
+
+inline u64 _pool_key_hash(pool_key_t k)
+{
+  return hash_64(k.offset, sizeof(u64));
+}
+
 
 void pool_init(void)
 {
@@ -37,8 +42,8 @@ static pool_val_t* _uicache_pool_find(pool_key_t k)
   pool_val_t *i;
   assert_spin_locked(&_uicache_pool_lock);
 
-  hash_for_each_possible(uicache_hash, i, list, k.offset) {
-    if (i->key.type == k.type) {
+  hash_for_each_possible(uicache_hash, i, list, _pool_key_hash(k)) {
+    if ((k.offset == i->key.offset) && (i->key.type == k.type)) {
       return i;
     }
   }
@@ -58,7 +63,7 @@ static pool_val_t* _uicache_pool_new(pool_key_t k)
   v->key = k;
   atomic_inc(&_uicache_stored_page_);
 
-  hash_add(uicache_hash, &(v->list), k.offset);
+  hash_add(uicache_hash, &(v->list), _pool_key_hash(k));
   return v;
 }
 
@@ -112,11 +117,8 @@ int uicache_pool_load(pool_key_t k, struct page *page)
   kunmap_atomic(dst);
   spin_unlock(&_uicache_pool_lock);
 
-  //  WARN_ON(!page->mem_cgroup);
-
   if (page->mem_cgroup) {
     printk("uicache pool load %d %ld\n", k.type, k.offset);
-    pg_inc(find_pg(page->mem_cgroup), page_key(page));
   }
   return 0;
 }

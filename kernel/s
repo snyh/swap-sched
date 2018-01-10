@@ -6,8 +6,8 @@ sudo cgcreate -g memory:/333 -t $name:$name -a $name:$name
 
 sudo cgcreate -g memory:/444 -t $name:$name -a $name:$name
 
-echo 100000000 | sudo tee /sys/fs/cgroup/memory/333/memory.limit_in_bytes
-echo 100000000 | sudo tee /sys/fs/cgroup/memory/444/memory.limit_in_bytes
+echo 50000000 | sudo tee /sys/fs/cgroup/memory/333/memory.limit_in_bytes
+echo 50000000 | sudo tee /sys/fs/cgroup/memory/444/memory.limit_in_bytes
 
 sudo dmesg -C
 echo "Under CGROUP"

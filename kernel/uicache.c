@@ -15,25 +15,34 @@
 
 #define _fmt(fmt) KERN_ERR""KBUILD_MODNAME ": " fmt
 
+static DEFINE_SPINLOCK(_uicache_lock);
+
 static int uicache_frontswap_store(unsigned type, pgoff_t offset,
 				struct page *page)
 {
   struct page_group *pg;
   pool_key_t t;
+  int ret = -1;
+
+  spin_lock(&_uicache_lock);
 
   if (!page->mem_cgroup) {
+    spin_unlock(&_uicache_lock);
     return -1;
   }
 
   pg = find_pg(page->mem_cgroup);
   if (!pg || !pg_has(pg, page_key(page))) {
+    spin_unlock(&_uicache_lock);
     return -1;
   }
 
   t.type = type;
   t.offset = offset;
 
-  return uicache_pool_store(t, page);
+  ret = uicache_pool_store(t, page);
+  spin_unlock(&_uicache_lock);
+  return ret;
 }
 
 static int uicache_frontswap_load(unsigned type, pgoff_t offset,
@@ -45,9 +54,9 @@ static int uicache_frontswap_load(unsigned type, pgoff_t offset,
     .offset = offset,
   };
 
+  spin_lock(&_uicache_lock);
   ret = uicache_pool_load(t, page);
-  WARN_ON(ret!=0);
-
+  spin_unlock(&_uicache_lock);
   return ret;
 }
 
@@ -57,7 +66,9 @@ static void uicache_frontswap_invalidate_page(unsigned type, pgoff_t offset)
     .type = type,
     .offset = offset,
   };
+  spin_lock(&_uicache_lock);
   uicache_pool_delete(t);
+  spin_unlock(&_uicache_lock);
 }
 
 static void uicache_frontswap_invalidate_area(unsigned type)
@@ -65,7 +76,9 @@ static void uicache_frontswap_invalidate_area(unsigned type)
   pool_key_t t = {
     .type = type,
   };
+  spin_lock(&_uicache_lock);
   uicache_pool_delete_all(t);
+  spin_unlock(&_uicache_lock);
   printk(_fmt("uicache try invalidating area of %d\n"), type);
 }
 

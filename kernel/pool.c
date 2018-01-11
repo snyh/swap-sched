@@ -14,6 +14,11 @@ struct kmem_cache *_mem_pool;
 
 static atomic_t _uicache_stored_page_ = ATOMIC_INIT(0);
 
+int uicache_stored_page()
+{
+  return atomic_read(&_uicache_stored_page_);
+}
+
 
 DEFINE_HASHTABLE(uicache_hash, sizeof(u64));
 

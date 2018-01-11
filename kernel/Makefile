@@ -1,4 +1,5 @@
 obj-m := uicache.o
+uicache-objs := pg.o pool.o hook.o main.o
 
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)

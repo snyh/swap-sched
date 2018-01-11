@@ -9,6 +9,8 @@
 
 struct page_group;
 
+int uicache_stored_page(void);
+
 bool pg_has(struct page_group* g, u64 k);
 void pg_inc(struct page_group* g, u64 k);
 struct page_group* find_pg(struct mem_cgroup* mc);

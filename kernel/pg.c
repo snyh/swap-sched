@@ -4,11 +4,14 @@
 #include <linux/memcontrol.h>
 #include <linux/cgroup.h>
 
+#include <linux/spinlock.h>
+
 #include "pg.h"
 
 #define INIT_PAGE_COUNT_VALUE  10
 #define MAX_CGROUP_PATH_SIZE 128
 
+#define _USE_SPIN
 
 u64 page_key(struct page *p)
 {
@@ -24,7 +27,11 @@ struct page_kv_counts {
 struct page_group {
   struct list_head list; //lisf of all_pg;
 
+#ifdef _USE_SPIN
+  struct spinlock lock;
+#else
   struct mutex lock;
+#endif
 
   struct list_head pages; //list head of page_kv_counts;
 
@@ -36,6 +43,23 @@ struct page_group {
   u16 count;
   u16 count_record;
 };
+
+void pg_lock(struct page_group* p)
+{
+#ifdef _USE_SPIN
+  spin_lock(&(p->lock));
+#else
+  mutex_lock(&(p->lock));
+#endif
+}
+void pg_unlock(struct page_group* p)
+{
+#ifdef _USE_SPIN
+  spin_unlock(&(p->lock));
+#else
+  mutex_unlock(&(p->lock));
+#endif
+}
 
 LIST_HEAD(all_pg);
 
@@ -89,14 +113,14 @@ struct page_group* find_pg(struct mem_cgroup* mc)
 bool pg_has(struct page_group* g, u64 k)
 {
   struct page_kv_counts *i;
-  mutex_lock(&(g->lock));
+  pg_lock(g);
   list_for_each_entry(i, &(g->pages), list) {
     if (i->k == k) {
-      mutex_unlock(&(g->lock));
+      pg_unlock(g);
       return true;
     }
   };
-  mutex_unlock(&(g->lock));
+  pg_unlock(g);
   return false;
 }
 
@@ -113,14 +137,14 @@ void pg_inc(struct page_group* g, u64 k)
     g->count_record++;
   }
 
-  mutex_lock(&(g->lock));
+  pg_lock(g);
 
   list_for_each_entry_safe(i, tmp, &(g->pages), list) {
     if (i->k == k) {
       i->v++;
       next = list_entry(i->list.next, struct page_kv_counts, list);
       // ensure the list's value is ascending order
-      mutex_unlock(&(g->lock));
+      pg_unlock(g);
       return;
     }
   };
@@ -137,20 +161,20 @@ void pg_inc(struct page_group* g, u64 k)
     list_add(&(i->list), &(g->pages));
     g->count++;
   }
-  mutex_unlock(&(g->lock));
+  pg_unlock(g);
 }
 
 void pg_reduce(struct page_group *g)
 {
   struct page_kv_counts *i, *tmp;
-  mutex_lock(&(g->lock));
+  pg_lock(g);
   list_for_each_entry_safe(i, tmp, &(g->pages), list) {
     if (i->v > 0) {
       i->v--;
     }
   };
   printk("Reduce Page Group %s\n", g->mcg_id);
-  mutex_unlock(&(g->lock));
+  pg_unlock(g);
 }
 
 bool begin_monitor(const char* mcg_id, u16 capacity)
@@ -161,7 +185,11 @@ bool begin_monitor(const char* mcg_id, u16 capacity)
   if (!g) {
     g = kmalloc(sizeof(*g), GFP_KERNEL);
     INIT_LIST_HEAD(&(g->pages));
+#ifdef _USE_SPIN
+    spin_lock_init(&g->lock);
+#else
     mutex_init(&g->lock);
+#endif
     memcpy(g->mcg_id, mcg_id, sizeof(g->mcg_id));
     g->count = 0;
     list_add(&(g->list), &all_pg);

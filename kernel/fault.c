@@ -48,7 +48,7 @@ void record_fault(struct file  *f, pgoff_t offset)
   i->file = f;
   i->offset = offset;
   INIT_WORK(&(i->w), work_func);
-  schedule_work(&(i->w));
+  queue_work(system_freezable_wq, &(i->w));
 }
 
 struct kv {
@@ -122,8 +122,11 @@ void record_dump(struct seq_file* file)
   mutex_unlock(&record_lock);
 }
 
-void _hook_filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
 {
+  struct vm_area_struct *vma = (void*)(regs->di);
+  struct vm_fault *vmf = (void*)(regs->si);
+
   struct file *file;
   struct address_space *mapping;
   pgoff_t offset;
@@ -144,19 +147,12 @@ void _hook_filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
     page = radix_tree_deref_slot(pagep);
     if (page)   {
       spin_unlock(&mapping->tree_lock);
-      return;
+      return 0;
     }
   }
   spin_unlock(&mapping->tree_lock);
 
   record_fault(get_file(file), offset);
-}
-
-int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
-{
-  struct vm_area_struct *vma = (void*)(regs->di);
-  struct vm_fault *vmf = (void*)(regs->si);
-  _hook_filemap_fault(vma, vmf);
   return 0;
 }
 
@@ -225,7 +221,7 @@ void fault_record_exit(void)
 
   unregister_kprobe(&pp);
 
-  flush_scheduled_work();
+  flush_workqueue(system_freezable_wq);
 
   remove_proc_entry(PROC_NAME, NULL);
 

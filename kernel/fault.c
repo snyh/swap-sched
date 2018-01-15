@@ -7,13 +7,14 @@
 #include <linux/module.h>
 #include <linux/seq_file.h>
 #include <linux/fs.h>
+#include <linux/file.h>
 #include <linux/proc_fs.h>
 #include <linux/radix-tree.h>
 #include <linux/workqueue.h>
 
 DEFINE_HASHTABLE(atoms, 8);
 
-#define NAME_SIZE 64
+#define NAME_SIZE 128
 
 struct record_task {
   struct file* file;
@@ -23,7 +24,7 @@ struct record_task {
 
 DEFINE_MUTEX(record_lock);
 
-static void do_record_fault(const char* name, pgoff_t offset);
+static void _do_record_fault(const char* name, pgoff_t offset);
 
 static void work_func(struct work_struct *work)
 {
@@ -34,14 +35,16 @@ static void work_func(struct work_struct *work)
   mutex_lock(&record_lock);
 
   name = file_path(t->file, buf, sizeof(buf));
-  fput_atomic(t->file);
-  do_record_fault(name, t->offset);
+  if (!IS_ERR(name)) {
+    _do_record_fault(name, t->offset);
+  }
+  fput(t->file);
   kfree(t);
 
   mutex_unlock(&record_lock);
 }
 
-void record_fault(struct file  *f, pgoff_t offset)
+void prepare_record_fault(struct file  *f, pgoff_t offset)
 {
   struct record_task *i = 0;
   i = kmalloc(sizeof(*i), GFP_ATOMIC);
@@ -64,7 +67,7 @@ struct atom {
   struct list_head detail;
 };
 
-void record_detail(struct atom* i, pgoff_t offset)
+void _record_detail(struct atom* i, pgoff_t offset)
 {
   struct kv* p;
   i->sum++;
@@ -81,7 +84,7 @@ void record_detail(struct atom* i, pgoff_t offset)
 }
 
 
-static void do_record_fault(const char* name, pgoff_t offset)
+static void _do_record_fault(const char* name, pgoff_t offset)
 {
   struct atom *i = NULL;
   u64 key = hashlen_string(&atoms, name);
@@ -89,18 +92,18 @@ static void do_record_fault(const char* name, pgoff_t offset)
   BUG_ON(!name);
 
   hash_for_each_possible(atoms, i, hlist, key) {
-    record_detail(i, offset);
+     _record_detail(i, offset);
     return;
   }
 
   i = kzalloc(sizeof(*i), GFP_ATOMIC);
   INIT_LIST_HEAD(&(i->detail));
   memcpy(i->name, name, NAME_SIZE);
-  record_detail(i, offset);
+  _record_detail(i, offset);
   hash_add(atoms, &(i->hlist), key);
 }
 
-void record_dump_detail(struct seq_file* file, struct atom *i)
+void _record_dump_detail(struct seq_file* file, struct atom *i)
 {
   struct kv *p;
   seq_printf(file, "%s\t%d", i->name, i->sum);
@@ -117,7 +120,7 @@ void record_dump(struct seq_file* file)
   int bkt;
   mutex_lock(&record_lock);
   hash_for_each(atoms, bkt, i, hlist) {
-    record_dump_detail(file, i);
+    _record_dump_detail(file, i);
   }
   mutex_unlock(&record_lock);
 }
@@ -152,7 +155,7 @@ int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
   }
   spin_unlock(&mapping->tree_lock);
 
-  record_fault(get_file(file), offset);
+  prepare_record_fault(get_file(file), offset);
   return 0;
 }
 
@@ -204,7 +207,8 @@ int fault_record_init(void)
   }
   return 0;
 }
-void destroy_atom(struct atom* i)
+
+void _destroy_atom(struct atom* i)
 {
   struct kv *p, *t;
   hash_del(&(i->hlist));
@@ -213,6 +217,7 @@ void destroy_atom(struct atom* i)
   }
   kfree(i);
 }
+
 void fault_record_exit(void)
 {
   struct atom *i;
@@ -225,9 +230,11 @@ void fault_record_exit(void)
 
   remove_proc_entry(PROC_NAME, NULL);
 
+  mutex_lock(&record_lock);
   hash_for_each_safe(atoms, bkt, t, i, hlist) {
-    destroy_atom(i);
+    _destroy_atom(i);
   }
+  mutex_unlock(&record_lock);
 }
 
 module_init(fault_record_init);

@@ -6,12 +6,50 @@
 #include <linux/pagemap.h>
 #include <linux/module.h>
 #include <linux/seq_file.h>
+#include <linux/fs.h>
 #include <linux/proc_fs.h>
 #include <linux/radix-tree.h>
+#include <linux/workqueue.h>
 
 DEFINE_HASHTABLE(atoms, 8);
 
 #define NAME_SIZE 64
+
+struct record_task {
+  struct file* file;
+  pgoff_t offset;;
+  struct work_struct w;
+};
+
+DEFINE_MUTEX(record_lock);
+
+static void do_record_fault(const char* name, pgoff_t offset);
+
+static void work_func(struct work_struct *work)
+{
+  static char buf[NAME_SIZE];
+  char* name = NULL;
+  struct record_task *t = container_of(work, struct record_task, w);
+
+  mutex_lock(&record_lock);
+
+  name = file_path(t->file, buf, sizeof(buf));
+  fput_atomic(t->file);
+  do_record_fault(name, t->offset);
+  kfree(t);
+
+  mutex_unlock(&record_lock);
+}
+
+void record_fault(struct file  *f, pgoff_t offset)
+{
+  struct record_task *i = 0;
+  i = kmalloc(sizeof(*i), GFP_ATOMIC);
+  i->file = f;
+  i->offset = offset;
+  INIT_WORK(&(i->w), work_func);
+  schedule_work(&(i->w));
+}
 
 struct kv {
   struct list_head list;
@@ -42,7 +80,8 @@ void record_detail(struct atom* i, pgoff_t offset)
   list_add(&(p->list), &(i->detail));
 }
 
-void record_fault(const char* name, pgoff_t offset)
+
+static void do_record_fault(const char* name, pgoff_t offset)
 {
   struct atom *i = NULL;
   u64 key = hashlen_string(&atoms, name);
@@ -76,9 +115,11 @@ void record_dump(struct seq_file* file)
 {
   struct atom *i;
   int bkt;
+  mutex_lock(&record_lock);
   hash_for_each(atoms, bkt, i, hlist) {
     record_dump_detail(file, i);
   }
+  mutex_unlock(&record_lock);
 }
 
 void _hook_filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
@@ -88,7 +129,6 @@ void _hook_filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
   pgoff_t offset;
   struct page *page;
   void **pagep;
-  char fname[NAME_SIZE] = {};
 
   BUG_ON(!vma);
   file = vma->vm_file;
@@ -109,7 +149,7 @@ void _hook_filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
   }
   spin_unlock(&mapping->tree_lock);
 
-  record_fault(file_path(file, fname, sizeof(fname)), offset);
+  record_fault(get_file(file), offset);
 }
 
 int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
@@ -119,7 +159,6 @@ int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
   _hook_filemap_fault(vma, vmf);
   return 0;
 }
-
 
 static struct kprobe pp = {
   .symbol_name = "filemap_fault",
@@ -153,9 +192,12 @@ static const struct file_operations proc_file_fops = {
 int fault_record_init(void)
 {
   int ret = -1;
-  struct proc_dir_entry *proc_file_entry = proc_create(PROC_NAME, 0, NULL, &proc_file_fops);
+  struct proc_dir_entry *proc_file_entry;
+
+  proc_file_entry = proc_create(PROC_NAME, 0, NULL, &proc_file_fops);
   if (proc_file_entry == NULL)
     return -ENOMEM;
+
 
   ret = register_kprobe(&pp);
   if (ret < 0) {
@@ -182,6 +224,8 @@ void fault_record_exit(void)
   int bkt;
 
   unregister_kprobe(&pp);
+
+  flush_scheduled_work();
 
   remove_proc_entry(PROC_NAME, NULL);
 

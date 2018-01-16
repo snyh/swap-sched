@@ -48,18 +48,29 @@ func PushMemInfos(d DataSource) error {
 	if err != nil {
 		return err
 	}
+	err = d.Write(p1)
+	if err != nil {
+		return err
+	}
+
 	p2, err := FetchCPUUsage()
 	if err != nil {
 		return err
 	}
-	return d.Write(p1, p2)
+	return d.Write(p2)
 }
 
 func FetchMemInfo() (*client.Point, error) {
 	infos := parseMemoryStatKB("/proc/meminfo", MemInfoKeys...)
-
 	return client.NewPoint("meminfo", nil, toPoint(infos), time.Now())
 }
+
+var (
+	_user   int
+	_system int
+	_idle   int
+	_iowait int
+)
 
 func FetchCPUUsage() (*client.Point, error) {
 	f, err := os.Open("/proc/stat")
@@ -70,11 +81,28 @@ func FetchCPUUsage() (*client.Point, error) {
 	var user, nice, system, idle, iowait int
 	var cpu string
 	fmt.Fscanln(f, &cpu, &user, &nice, &system, &idle, &iowait)
+	max := func(v1, v2 int) int {
+		if v1 > v2 {
+			return v1
+		} else {
+			return v2
+		}
+	}
+
+	v1 := max((user - _user), 0)
+	_user = user
+
+	v2 := max((system - _system), 0)
+	_system = system
+
+	v3 := max((idle - _idle), 0)
+	_idle = idle
+
+	v4 := max((iowait - _iowait), 0)
+	_iowait = iowait
+
 	infos := map[string]interface{}{
-		"user":   user,
-		"system": system,
-		"idle":   idle,
-		"iowait": iowait,
+		"iowait": int(float32(v4) * 100 / float32((v1 + v2 + v3 + v4))),
 	}
 	return client.NewPoint("cpu", nil, infos, time.Now())
 }
@@ -82,7 +110,7 @@ func FetchCPUUsage() (*client.Point, error) {
 func toPoint(d map[string]uint64) map[string]interface{} {
 	ret := make(map[string]interface{})
 	for k, v := range d {
-		ret[k] = v
+		ret[k] = int(v)
 	}
 	return ret
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/influxdata/influxdb/client/v2"
 	"io"
@@ -16,17 +15,20 @@ type DumpClient struct {
 	w io.Writer
 }
 
-func (c DumpClient) Push(infos []ProcessInfo) error {
-	return json.NewEncoder(c.w).Encode(infos)
+func (c DumpClient) Write(ps ...*client.Point) error {
+	for _, p := range ps {
+		fmt.Println(c.w, p.String())
+	}
+	return nil
 }
 func (c DumpClient) Close() error { return nil }
 
 type DataSource interface {
-	Push([]ProcessInfo) error
+	Write(ps ...*client.Point) error
 	Close() error
 }
 
-func (c *InfluxClient) Push(infos []ProcessInfo) error {
+func (c *InfluxClient) Write(ps ...*client.Point) error {
 	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
 		Database:  c.dbname,
 		Precision: "ms",
@@ -34,17 +36,8 @@ func (c *InfluxClient) Push(infos []ProcessInfo) error {
 	if err != nil {
 		return err
 	}
-
-	for _, info := range infos {
-		tags := map[string]string{
-			"pid":  fmt.Sprintf("%d", info["Pid"]),
-			"name": info["Name"].(string),
-		}
-		pt, err := client.NewPoint("process", tags, info, time.Now())
-		if err != nil {
-			return fmt.Errorf("NewPoint: %v", err)
-		}
-		bp.AddPoint(pt)
+	for _, p := range ps {
+		bp.AddPoint(p)
 	}
 	return c.c.Write(bp)
 }

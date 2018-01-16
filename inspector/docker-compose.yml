@@ -44,17 +44,3 @@ influxdb-data:
     tty: true
     volumes:
         - /var/lib/influxdb
-
-# telegraf:
-#     image: matisq/telegraf:latest
-#     links:
-#         - influxdb:influxdb
-#     environment:
-#         HOST_NAME: "telegraf"
-#         INFLUXDB_HOST: "influxdb"
-#         INFLUXDB_PORT: "8086"
-#         DATABASE: "telegraf"
-#     tty: true
-#     volumes:
-#         - /var/run/docker.sock:/var/run/docker.sock
-#     privileged: true

@@ -12,34 +12,6 @@ func Error(fmtStr string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, fmtStr, args...)
 }
 
-func fetchAllUserProcess() []ProcessInfo {
-	ps, err := Pids()
-	if err != nil {
-		Error("Panic: %v\n", err)
-		return nil
-	}
-	var infos []ProcessInfo
-	for _, p := range ps {
-		if p == int32(MyPID) {
-			continue
-		}
-		info, err := FetchProcessInfo(p)
-		if err != nil {
-			Error("E: %v\n", err)
-			// The process has been exists
-			continue
-		}
-		if info["VMS"].(int64) == 0 {
-			// It's a zombie or kernel process
-			continue
-		}
-		infos = append(infos, info)
-	}
-	return infos
-}
-
-var MyPID = syscall.Getpid()
-
 func main() {
 	var addr string
 	var user, passwd string
@@ -73,7 +45,8 @@ func main() {
 
 	for {
 		time.Sleep(time.Millisecond * 500)
-		err = client.Push(fetchAllUserProcess())
+		//		PushProcessInfo(client)
+		PushMemInfos(client)
 		if err != nil {
 			Error("E2: %v\n", err)
 		}

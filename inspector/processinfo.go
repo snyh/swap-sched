@@ -2,13 +2,61 @@ package main
 
 import (
 	"fmt"
+	"github.com/influxdata/influxdb/client/v2"
 	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
-func Pids() ([]int32, error) {
+func PushProcessInfo(d DataSource) error {
+	infos := fetchAllUserProcess()
+	var ps []*client.Point
+	for _, info := range infos {
+		tags := map[string]string{
+			"pid":  fmt.Sprintf("%d", info["Pid"]),
+			"name": info["Name"].(string),
+		}
+		pt, err := client.NewPoint("process", tags, info, time.Now())
+		if err != nil {
+			return fmt.Errorf("NewPoint: %v", err)
+		}
+		ps = append(ps, pt)
+	}
+	return d.Write(ps...)
+}
+
+func fetchAllUserProcess() []ProcessInfo {
+	ps, err := pids()
+	if err != nil {
+		Error("Panic: %v\n", err)
+		return nil
+	}
+	var infos []ProcessInfo
+	for _, p := range ps {
+		if p == int32(myPID) {
+			continue
+		}
+		info, err := fetchProcessInfo(p)
+		if err != nil {
+			Error("E: %v\n", err)
+			// The process has been exists
+			continue
+		}
+		if info["VMS"].(int64) == 0 {
+			// It's a zombie or kernel process
+			continue
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
+var myPID = syscall.Getpid()
+
+func pids() ([]int32, error) {
 	var ret []int32
 	d, err := os.Open("/proc")
 	if err != nil {
@@ -77,7 +125,7 @@ type _ProcessInfo struct {
 
 var NullInfo ProcessInfo
 
-func FetchProcessInfo(pid int32) (ProcessInfo, error) {
+func fetchProcessInfo(pid int32) (ProcessInfo, error) {
 	basePath := fmt.Sprintf("/proc/%d/", pid)
 	var p _ProcessInfo
 	p.Pid = pid

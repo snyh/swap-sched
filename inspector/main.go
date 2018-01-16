@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"syscall"
 	"time"
 )
 
@@ -33,8 +32,6 @@ func main() {
 	if dump {
 		client = DumpClient{os.Stdout}
 	} else {
-		syscall.Mlockall(syscall.MCL_FUTURE)
-
 		client, err = NewInfluxClient(addr, user, passwd, dbname)
 		if err != nil {
 			Error("E: %v\n", err)
@@ -45,8 +42,8 @@ func main() {
 
 	for {
 		time.Sleep(time.Millisecond * 500)
-		//		PushProcessInfo(client)
-		PushMemInfos(client)
+		//PushProcessInfo(client)
+		err = PushMemInfos(client)
 		if err != nil {
 			Error("E2: %v\n", err)
 		}

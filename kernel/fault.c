@@ -31,11 +31,12 @@ struct kv {
   u32 count;
 };
 
+#define MAX_COUNT_SIZE 256
 struct atom {
   struct hlist_node hlist;
   pid_t pid;
   char name[NAME_SIZE];
-  u32 sum;
+  u32 count_sum[MAX_COUNT_SIZE+1];
   struct list_head anon_detail;
   struct list_head file_detail;
 };
@@ -81,11 +82,22 @@ void prepare_record_fault(unsigned long addr, bool is_anon)
   schedule_work(&(i->w));
 }
 
+void _atom_count_sum(struct atom * i, int c)
+{
+  if (c >= MAX_COUNT_SIZE) {
+    i->count_sum[MAX_COUNT_SIZE]++;
+  } else if (c == 1) {
+    i->count_sum[1]++;
+  } else {
+    i->count_sum[c]++;
+    i->count_sum[c-1]--;
+  }
+}
+
 void _record_detail(struct atom* i, unsigned long addr, bool is_anon)
 {
   struct kv* p;
   struct list_head *head;
-  i->sum++;
 
   if (is_anon) {
     head = &(i->anon_detail);
@@ -96,6 +108,7 @@ void _record_detail(struct atom* i, unsigned long addr, bool is_anon)
   list_for_each_entry(p, head, list) {
     if (p->addr == addr) {
       p->count++;
+      _atom_count_sum(i, p->count);
       return;
     }
   }
@@ -103,6 +116,7 @@ void _record_detail(struct atom* i, unsigned long addr, bool is_anon)
   p = kmalloc(sizeof(*p), GFP_ATOMIC);
   p->addr = addr;
   p->count = 1;
+  _atom_count_sum(i, p->count);
   list_add(&(p->list), head);
 }
 
@@ -127,12 +141,11 @@ static void do_record_fault(struct record_task *t)
     return;
   }
 
-  i = kmalloc(sizeof(*i), GFP_ATOMIC);
+  i = kzalloc(sizeof(*i), GFP_ATOMIC);
   INIT_LIST_HEAD(&(i->anon_detail));
   INIT_LIST_HEAD(&(i->file_detail));
   i->pid = t->pid;
   memcpy(i->name, t->name, NAME_SIZE);
-  i->sum = 0;
   _record_detail(i, t->addr, t->is_anon);
   hash_add(atoms, &(i->hlist), t->pid);
 }
@@ -140,15 +153,33 @@ static void do_record_fault(struct record_task *t)
 void _record_dump_detail(struct seq_file* file, struct atom *i)
 {
   struct kv *p;
-  seq_printf(file, "%d(%s)\t%d", i->pid, i->name, i->sum);
 
-  seq_printf(file, "\n\tAnon:");
-  list_for_each_entry(p, &(i->anon_detail), list) {
-    seq_printf(file, " %d", p->count);
+  int greater_than_one = 0, pos = 2;
+  for (; pos < MAX_COUNT_SIZE; pos++) {
+    greater_than_one += i->count_sum[pos];
   }
-  seq_printf(file, "\n\tFile:");
+  if (greater_than_one == 0) {
+    return;
+  }
+  seq_printf(file, "%d(%s)", i->pid, i->name);
+
+  pos = 0;
+  list_for_each_entry(p, &(i->anon_detail), list) {
+    pos += p->count;
+  }
+  seq_printf(file, "\tAnon:%d", pos);
+
+  pos = 0;
+
   list_for_each_entry(p, &(i->file_detail), list) {
-    seq_printf(file, " %d", p->count);
+    pos += p->count;
+  }
+  seq_printf(file, "\tFile:%d\n", pos);
+
+  seq_putc(file, '\t');
+  for (pos = 0; pos < MAX_COUNT_SIZE; pos++) {
+    if (i->count_sum[pos] > 0)
+      seq_printf(file, " [%d:%d]", pos+1, i->count_sum[pos]);
   }
   seq_putc(file, '\n');
 }

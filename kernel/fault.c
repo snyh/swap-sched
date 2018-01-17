@@ -58,12 +58,14 @@ static void work_func(struct work_struct *work)
   kfree(t);
 }
 
-void prepare_release(void)
+void prepare_release(pid_t pid)
 {
   struct record_task *i = 0;
   i = kmalloc(sizeof(*i), GFP_ATOMIC);
-  i->pid = current->pid;
+  i->pid = pid;
   i->is_release = true;
+  INIT_WORK(&(i->w), work_func);
+
   schedule_work(&(i->w));
 }
 
@@ -125,7 +127,8 @@ static void do_release(pid_t pid)
   struct atom *i = NULL;
   mutex_lock(&record_lock);
   hash_for_each_possible(atoms, i, hlist, pid) {
-    break;
+    if (i->pid == pid)
+      break;
   }
   if (i) {
     _destroy_atom(i);
@@ -137,8 +140,10 @@ static void do_record_fault(struct record_task *t)
   struct atom *i = NULL;
 
   hash_for_each_possible(atoms, i, hlist, t->pid) {
-    _record_detail(i, t->addr, t->is_anon);
-    return;
+    if (i->pid == t->pid) {
+      _record_detail(i, t->addr, t->is_anon);
+      return;
+    }
   }
 
   i = kzalloc(sizeof(*i), GFP_ATOMIC);
@@ -184,17 +189,6 @@ void _record_dump_detail(struct seq_file* file, struct atom *i)
   seq_putc(file, '\n');
 }
 
-static bool is_alive(pid_t p)
-{
-  struct task_struct *t;
-  for_each_process(t) {
-    if (t->pid == p) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void record_dump(struct seq_file* file)
 {
   struct atom *i;
@@ -205,11 +199,7 @@ void record_dump(struct seq_file* file)
     if (current->pid == i->pid) {
       continue;
     }
-    if (is_alive(i->pid)) {
-      _record_dump_detail(file, i);
-    } else {
-      _destroy_atom(i);
-    }
+    _record_dump_detail(file, i);
   }
   mutex_unlock(&record_lock);
 }
@@ -238,12 +228,16 @@ int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
 
 int hook_do_exit(struct kprobe *p, struct pt_regs *regs)
 {
-  prepare_release();
+  prepare_release(current->pid);
   return 0;
 }
 
 #define NUM_PROBE 3
 static struct kprobe pp[NUM_PROBE] = {
+  {
+    .symbol_name = "do_exit",
+    .pre_handler = hook_do_exit,
+  },
   {
     .symbol_name = "filemap_fault",
     .pre_handler = hook_filemap_fault,
@@ -252,10 +246,6 @@ static struct kprobe pp[NUM_PROBE] = {
     .symbol_name = "read_swap_cache_async",
     .pre_handler = hook_swapin_fault,
   },
-  {
-    .symbol_name = "do_group_exit",
-    .pre_handler = hook_do_exit,
-  },
 };
 
 int register_pp(void)
@@ -263,10 +253,10 @@ int register_pp(void)
   int ret = 0;
   int i, j;
   for (i=0; i<NUM_PROBE;i++) {
-    ret = register_kprobe(&pp[i]);
-    if (!ret) {
-      for (j=i; j>0; j--) {
-        unregister_kprobe(&pp[j]);
+    ret = register_kprobe(&(pp[i]));
+    if (ret) {
+      for (j=i; j>=0; j--) {
+        unregister_kprobe(&(pp[j]));
       }
       return ret;
     }
@@ -325,13 +315,15 @@ int fault_record_init(void)
 void _destroy_atom(struct atom* i)
 {
   struct kv *p, *t;
-  hash_del(&(i->hlist));
   list_for_each_entry_safe(p, t, &(i->anon_detail), list) {
+    list_del(&(p->list));
     kfree(p);
   }
   list_for_each_entry_safe(p, t, &(i->file_detail), list) {
+    list_del(&(p->list));
     kfree(p);
   }
+  hash_del(&(i->hlist));
   kfree(i);
 }
 

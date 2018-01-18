@@ -56,21 +56,22 @@ void _destroy_atom(struct atom* i);
 unsigned short task_memcg_id(pid_t p)
 {
   struct task_struct *t;
-  struct mem_cgroup *cg;
+  struct mem_cgroup *cg = 0;
+  unsigned short id = 0;
 
+  rcu_read_lock();
   for_each_process(t) {
     if (t->pid != p) {
       continue;
     }
-
     cg = mem_cgroup_from_task(t);
-    if (!cg) {
-      return 0;
-    }
-    return mem_cgroup_id(cg);
+    break;
   }
-
-  return 0;
+  if (cg) {
+    id = mem_cgroup_id(cg);
+  }
+  rcu_read_unlock();
+  return id;
 }
 
 static void work_func(struct work_struct *work)
@@ -201,6 +202,12 @@ void _record_dump_detail(struct seq_file* file, struct atom *i)
 {
   struct kv *p;
   int greater_than_one = 0, pos = 2;
+  unsigned long file_all = 0, anon_all = 0;
+  unsigned short memcg_id = task_memcg_id(i->pid);
+  if (memcg_id == 0) {
+    _destroy_atom(i);
+    return;
+  }
 
   for (; pos < MAX_COUNT_SIZE; pos++) {
     greater_than_one += i->count_sum[pos];
@@ -208,20 +215,16 @@ void _record_dump_detail(struct seq_file* file, struct atom *i)
   if (greater_than_one == 0) {
     return;
   }
-  seq_printf(file, "%d %d %s", task_memcg_id(i->pid), i->pid, i->name);
 
-  pos = 0;
   list_for_each_entry(p, &(i->anon_detail), list) {
-    pos += p->count;
+    anon_all += p->count;
   }
-  seq_printf(file, "\tAnon:%d", pos);
-
-  pos = 0;
-
   list_for_each_entry(p, &(i->file_detail), list) {
-    pos += p->count;
+    file_all += p->count;
   }
-  seq_printf(file, "\tFile:%d\n", pos);
+
+  seq_printf(file, "%d\t%ld\t%ld%%\t%d\t%s", memcg_id, anon_all+file_all, anon_all*100/(anon_all+file_all+1),
+             i->pid, i->name);
 
   seq_putc(file, '\t');
   for (pos = 0; pos < MAX_COUNT_SIZE; pos++) {
@@ -236,6 +239,9 @@ void record_dump(struct seq_file* file)
   struct atom *i;
   struct hlist_node *tmp;
   int bkt;
+
+  seq_printf(file, "MEMID\tALL\tAnon%%\tPID\tCOMM\n");
+
   mutex_lock(&record_lock);
   hash_for_each_safe(atoms, bkt, tmp, i, hlist) {
     if (current->pid == i->pid) {
@@ -290,12 +296,12 @@ int hook_do_exit(struct kprobe *p, struct pt_regs *regs)
   return 0;
 }
 
-#define NUM_PROBE 2
+#define NUM_PROBE 1
 static struct kprobe pp[NUM_PROBE] = {
-  {
-    .symbol_name = "do_exit",
-    .pre_handler = hook_do_exit,
-  },
+  /* { */
+  /*   .symbol_name = "do_exit", */
+  /*   .pre_handler = hook_do_exit, */
+  /* }, */
   {
     .symbol_name = "filemap_fault",
     .pre_handler = hook_filemap_fault,

@@ -53,6 +53,26 @@ static void do_record_fault(struct record_task *t);
 static void do_release(pid_t pid);
 void _destroy_atom(struct atom* i);
 
+unsigned short task_memcg_id(pid_t p)
+{
+  struct task_struct *t;
+  struct mem_cgroup *cg;
+
+  for_each_process(t) {
+    if (t->pid != p) {
+      continue;
+    }
+
+    cg = mem_cgroup_from_task(t);
+    if (!cg) {
+      return 0;
+    }
+    return mem_cgroup_id(cg);
+  }
+
+  return 0;
+}
+
 static void work_func(struct work_struct *work)
 {
   struct record_task *t = container_of(work, struct record_task, w);
@@ -180,15 +200,15 @@ static void do_record_fault(struct record_task *t)
 void _record_dump_detail(struct seq_file* file, struct atom *i)
 {
   struct kv *p;
-
   int greater_than_one = 0, pos = 2;
+
   for (; pos < MAX_COUNT_SIZE; pos++) {
     greater_than_one += i->count_sum[pos];
   }
   if (greater_than_one == 0) {
     return;
   }
-  seq_printf(file, "%d(%s)", i->pid, i->name);
+  seq_printf(file, "%d %d %s", task_memcg_id(i->pid), i->pid, i->name);
 
   pos = 0;
   list_for_each_entry(p, &(i->anon_detail), list) {
@@ -226,11 +246,13 @@ void record_dump(struct seq_file* file)
   mutex_unlock(&record_lock);
 }
 
+
 int hook_entry_swapin_fault(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
   struct readswapin_args *d;
   if (!current->mm)
     return 1;
+
   d = (struct readswapin_args*)ri->data;
   d->address = (unsigned long)regs->cx;
   d->miss_from_swapcache = (void*)(regs->r8);
@@ -261,7 +283,7 @@ int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
 
 int hook_do_exit(struct kprobe *p, struct pt_regs *regs)
 {
-  if (!current->mm) {
+  if (!current || !current->mm) {
     return 1;
   }
   prepare_release(current->pid);

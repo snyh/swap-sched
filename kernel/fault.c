@@ -11,6 +11,7 @@
 #include <linux/proc_fs.h>
 #include <linux/radix-tree.h>
 #include <linux/workqueue.h>
+#include <linux/swap.h>
 
 DEFINE_HASHTABLE(atoms, 8);
 
@@ -43,6 +44,11 @@ struct atom {
 
 DEFINE_MUTEX(record_lock);
 
+struct readswapin_args {
+  unsigned long address;
+  bool *miss_from_swapcache;
+};
+
 static void do_record_fault(struct record_task *t);
 static void do_release(pid_t pid);
 void _destroy_atom(struct atom* i);
@@ -62,6 +68,8 @@ void prepare_release(pid_t pid)
 {
   struct record_task *i = 0;
   i = kmalloc(sizeof(*i), GFP_ATOMIC);
+  if (unlikely(!i))
+    return;
   i->pid = pid;
   i->is_release = true;
   INIT_WORK(&(i->w), work_func);
@@ -74,6 +82,9 @@ void prepare_record_fault(unsigned long addr, bool is_anon)
   struct record_task *i = 0;
   int name_s;
   i = kzalloc(sizeof(*i), GFP_ATOMIC);
+  if (unlikely(!i))
+    return;
+
   i->is_release = false;
   i->pid = current->pid;
   name_s = strlen(current->comm);
@@ -116,6 +127,8 @@ void _record_detail(struct atom* i, unsigned long addr, bool is_anon)
   }
 
   p = kmalloc(sizeof(*p), GFP_ATOMIC);
+  if (unlikely(!p))
+    return;
   p->addr = addr;
   p->count = 1;
   _atom_count_sum(i, p->count);
@@ -147,6 +160,9 @@ static void do_record_fault(struct record_task *t)
   }
 
   i = kzalloc(sizeof(*i), GFP_ATOMIC);
+  if (unlikely(!i))
+    return;
+
   INIT_LIST_HEAD(&(i->anon_detail));
   INIT_LIST_HEAD(&(i->file_detail));
   i->pid = t->pid;
@@ -204,14 +220,25 @@ void record_dump(struct seq_file* file)
   mutex_unlock(&record_lock);
 }
 
-int hook_swapin_fault(struct kprobe *p, struct pt_regs *regs)
+int hook_entry_swapin_fault(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-  //  struct vm_area_struct *vma = (void*)(regs->dx);
-  unsigned long addr = regs->cx;
-  if (!current->mm) {
-    return 0;
+  struct readswapin_args *d;
+  if (!current->mm)
+    return 1;
+  d = (struct readswapin_args*)ri->data;
+  d->address = (unsigned long)regs->cx;
+  d->miss_from_swapcache = (void*)(regs->r8);
+  return 0;
+}
+
+int hook_ret_swapin_fault(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+  int __maybe_unused retval = regs_return_value(regs);
+  struct readswapin_args *d = (struct readswapin_args*)ri->data;
+  bool *miss = d->miss_from_swapcache;
+  if (miss && *miss) {
+    prepare_record_fault(d->address, true);
   }
-  prepare_record_fault(addr, true);
   return 0;
 }
 
@@ -220,7 +247,7 @@ int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
   struct vm_fault *vmf = (void*)(regs->si);
   unsigned long addr = (unsigned long)vmf->virtual_address;
   if (!current->mm) {
-    return 0;
+    return 1;
   }
   prepare_record_fault(addr, false);
   return 0;
@@ -228,11 +255,14 @@ int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
 
 int hook_do_exit(struct kprobe *p, struct pt_regs *regs)
 {
+  if (!current->mm) {
+    return 1;
+  }
   prepare_release(current->pid);
   return 0;
 }
 
-#define NUM_PROBE 3
+#define NUM_PROBE 2
 static struct kprobe pp[NUM_PROBE] = {
   {
     .symbol_name = "do_exit",
@@ -242,9 +272,15 @@ static struct kprobe pp[NUM_PROBE] = {
     .symbol_name = "filemap_fault",
     .pre_handler = hook_filemap_fault,
   },
+};
+
+#define NUM_RETPROBE 1
+static struct kretprobe retpp[NUM_RETPROBE] = {
   {
-    .symbol_name = "read_swap_cache_async",
-    .pre_handler = hook_swapin_fault,
+    .handler = hook_ret_swapin_fault,
+    .entry_handler = hook_entry_swapin_fault,
+    .data_size = sizeof(struct readswapin_args),
+    .kp.symbol_name = "__read_swap_cache_async",
   },
 };
 
@@ -261,13 +297,25 @@ int register_pp(void)
       return ret;
     }
   }
+  for (i=0; i<NUM_RETPROBE;i++) {
+    ret = register_kretprobe(&(retpp[i]));
+    if (ret) {
+      for (j=i; j>=0; j--) {
+        unregister_kretprobe(&(retpp[j]));
+      }
+      return ret;
+    }
+  }
   return 0;
 }
 
 void unregister_pp(void)
 {
-  int i=0;
-  for (; i < NUM_PROBE; i++) {
+  int i;
+  for (i=0; i < NUM_RETPROBE; i++) {
+    unregister_kretprobe(&retpp[i]);
+  }
+  for (i=0; i < NUM_PROBE; i++) {
     unregister_kprobe(&pp[i]);
   }
 }

@@ -1,5 +1,4 @@
-obj-m := uicache.o fault.o
-uicache-objs := pg.o hook.o main.o
+obj-m := fault.o
 
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
@@ -17,7 +16,5 @@ clean:
 
 test:
 	-@sudo rmmod fault
-	-@sudo rmmod uicache
-	sudo insmod ./uicache.ko
 	sudo insmod ./fault.ko
 	sudo dmesg | tail

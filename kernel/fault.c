@@ -152,12 +152,15 @@ static void do_record_fault(struct record_task *t)
 {
   struct atom *i = NULL;
 
+  mutex_lock(&record_lock);
   hash_for_each_possible(atoms, i, hlist, t->pid) {
     if (i->pid == t->pid) {
       _record_detail(i, t->addr, t->is_anon);
+      mutex_unlock(&record_lock);
       return;
     }
   }
+  mutex_unlock(&record_lock);
 
   i = kzalloc(sizeof(*i), GFP_ATOMIC);
   if (unlikely(!i))
@@ -167,8 +170,11 @@ static void do_record_fault(struct record_task *t)
   INIT_LIST_HEAD(&(i->file_detail));
   i->pid = t->pid;
   memcpy(i->name, t->name, NAME_SIZE);
+
+  mutex_lock(&record_lock);
   _record_detail(i, t->addr, t->is_anon);
   hash_add(atoms, &(i->hlist), t->pid);
+  mutex_unlock(&record_lock);
 }
 
 void _record_dump_detail(struct seq_file* file, struct atom *i)

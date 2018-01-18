@@ -198,6 +198,28 @@ static void do_record_fault(struct record_task *t)
   mutex_unlock(&record_lock);
 }
 
+void ggoo(struct seq_file* file, const char* t, struct list_head* head, int min)
+{
+  struct kv *p;
+  unsigned long all = 0;
+  unsigned long good_num = 0;
+  unsigned long good_sum = 0;
+  list_for_each_entry(p, head, list) {
+    all += p->count;
+    if (p->count > min) {
+      good_sum += p->count;
+      good_num++;
+    }
+  }
+  if (good_num == 0 || all == 0) {
+    return;
+  }
+  seq_printf(file, "\tUse %ldKB reduce %dMB IO(%ld%%) for %s",
+             good_num * 4 , good_sum * 4 / 1024, good_sum*100 / all,
+             t);
+}
+
+
 void _record_dump_detail(struct seq_file* file, struct atom *i)
 {
   struct kv *p;
@@ -219,6 +241,7 @@ void _record_dump_detail(struct seq_file* file, struct atom *i)
   list_for_each_entry(p, &(i->anon_detail), list) {
     anon_all += p->count;
   }
+
   list_for_each_entry(p, &(i->file_detail), list) {
     file_all += p->count;
   }
@@ -226,11 +249,14 @@ void _record_dump_detail(struct seq_file* file, struct atom *i)
   seq_printf(file, "%d\t%ld\t%ld%%\t%d\t%s", memcg_id, anon_all+file_all, anon_all*100/(anon_all+file_all+1),
              i->pid, i->name);
 
-  seq_putc(file, '\t');
-  for (pos = 0; pos < MAX_COUNT_SIZE; pos++) {
-    if (i->count_sum[pos] > 0)
-      seq_printf(file, " [%d:%d]", pos+1, i->count_sum[pos]);
-  }
+  ggoo(file, "file", &(i->file_detail), 100);
+  ggoo(file, "anonymous", &(i->anon_detail), 100);
+
+  /* seq_putc(file, '\t'); */
+  /* for (pos = 0; pos < MAX_COUNT_SIZE; pos++) { */
+  /*   if (i->count_sum[pos] > 0) */
+  /*     seq_printf(file, " [%d:%d]", pos+1, i->count_sum[pos]); */
+  /* } */
   seq_putc(file, '\n');
 }
 

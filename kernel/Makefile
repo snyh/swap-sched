@@ -1,4 +1,4 @@
-obj-m := fault.o
+obj-m := refault.o
 
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
@@ -15,6 +15,6 @@ clean:
 	rm modules.order
 
 test:
-	-@sudo rmmod fault
-	sudo insmod ./fault.ko
+	-@sudo rmmod refault
+	sudo insmod ./refault.ko
 	sudo dmesg | tail

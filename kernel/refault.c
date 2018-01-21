@@ -49,7 +49,7 @@ struct readswapin_args {
   bool *miss_from_swapcache;
 };
 
-static void do_record_fault(struct record_task *t);
+static void do_record_refault(struct record_task *t);
 static void do_release(pid_t pid);
 void _destroy_atom(struct atom* i);
 
@@ -80,7 +80,7 @@ static void work_func(struct work_struct *work)
   if (t->is_release) {
     do_release(t->pid);
   } else {
-    do_record_fault(t);
+    do_record_refault(t);
   }
   kfree(t);
 }
@@ -98,7 +98,7 @@ void prepare_release(pid_t pid)
   schedule_work(&(i->w));
 }
 
-void prepare_record_fault(unsigned long addr, bool is_anon)
+void prepare_record_refault(unsigned long addr, bool is_anon)
 {
   struct record_task *i = 0;
   int name_s;
@@ -169,7 +169,7 @@ static void do_release(pid_t pid)
   }
   mutex_unlock(&record_lock);
 }
-static void do_record_fault(struct record_task *t)
+static void do_record_refault(struct record_task *t)
 {
   struct atom *i = NULL;
 
@@ -279,7 +279,7 @@ void record_dump(struct seq_file* file)
 }
 
 
-int hook_entry_swapin_fault(struct kretprobe_instance *ri, struct pt_regs *regs)
+int hook_entry_swapin_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
   struct readswapin_args *d;
   if (!current->mm)
@@ -291,25 +291,25 @@ int hook_entry_swapin_fault(struct kretprobe_instance *ri, struct pt_regs *regs)
   return 0;
 }
 
-int hook_ret_swapin_fault(struct kretprobe_instance *ri, struct pt_regs *regs)
+int hook_ret_swapin_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
   int __maybe_unused retval = regs_return_value(regs);
   struct readswapin_args *d = (struct readswapin_args*)ri->data;
   bool *miss = d->miss_from_swapcache;
   if (miss && *miss) {
-    prepare_record_fault(d->address, true);
+    prepare_record_refault(d->address, true);
   }
   return 0;
 }
 
-int hook_filemap_fault(struct kprobe *p, struct pt_regs *regs)
+int hook_filemap_refault(struct kprobe *p, struct pt_regs *regs)
 {
   struct vm_fault *vmf = (void*)(regs->si);
   unsigned long addr = (unsigned long)vmf->virtual_address;
   if (!current->mm) {
     return 1;
   }
-  prepare_record_fault(addr, false);
+  prepare_record_refault(addr, false);
   return 0;
 }
 
@@ -330,15 +330,15 @@ static struct kprobe pp[NUM_PROBE] = {
   /* }, */
   {
     .symbol_name = "filemap_fault",
-    .pre_handler = hook_filemap_fault,
+    .pre_handler = hook_filemap_refault,
   },
 };
 
 #define NUM_RETPROBE 1
 static struct kretprobe retpp[NUM_RETPROBE] = {
   {
-    .handler = hook_ret_swapin_fault,
-    .entry_handler = hook_entry_swapin_fault,
+    .handler = hook_ret_swapin_refault,
+    .entry_handler = hook_entry_swapin_refault,
     .data_size = sizeof(struct readswapin_args),
     .kp.symbol_name = "__read_swap_cache_async",
   },
@@ -380,7 +380,7 @@ void unregister_pp(void)
   }
 }
 
-#define PROC_NAME "fault"
+#define PROC_NAME "refault"
 
 static int show_proc_content(struct seq_file *filp, void *p)
 {
@@ -401,7 +401,7 @@ static const struct file_operations proc_file_fops = {
   .release = single_release,
 };
 
-int fault_record_init(void)
+int refault_record_init(void)
 {
   int ret = -1;
   struct proc_dir_entry *proc_file_entry;
@@ -435,7 +435,7 @@ void _destroy_atom(struct atom* i)
   kfree(i);
 }
 
-void fault_record_exit(void)
+void refault_record_exit(void)
 {
   struct atom *i;
   struct hlist_node *t;
@@ -454,9 +454,9 @@ void fault_record_exit(void)
   mutex_unlock(&record_lock);
 }
 
-module_init(fault_record_init);
-module_exit(fault_record_exit);
+module_init(refault_record_init);
+module_exit(refault_record_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("snyh<snyh@snyh.org>");
-MODULE_DESCRIPTION("recording faults about pagecache and swapcache");
+MODULE_DESCRIPTION("recording refaults about pagecache and swapcache");

@@ -22,7 +22,7 @@ struct record_task {
   pid_t pid;
   char name[NAME_SIZE];
   unsigned long addr;
-  bool is_anon;
+  struct file *file;
   bool is_release;
   struct work_struct w;
 };
@@ -30,6 +30,7 @@ struct record_task {
 struct kv {
   struct list_head list;
   unsigned long addr;
+  char vm_file_name[NAME_SIZE];
   u32 count;
 };
 
@@ -94,12 +95,13 @@ void prepare_release(pid_t pid)
     return;
   i->pid = pid;
   i->is_release = true;
+  i->file = 0;
   INIT_WORK(&(i->w), work_func);
 
   schedule_work(&(i->w));
 }
 
-void prepare_record_refault(unsigned long addr, bool is_anon)
+void prepare_record_refault(unsigned long addr, struct file* file)
 {
   struct record_task *i = 0;
   int name_s;
@@ -112,7 +114,10 @@ void prepare_record_refault(unsigned long addr, bool is_anon)
   name_s = strlen(current->comm);
   memcpy(i->name, current->comm, min(NAME_SIZE, name_s));
   i->addr = addr;
-  i->is_anon = is_anon;
+  if (file) {
+    i->file = get_file(file);
+  }
+
   INIT_WORK(&(i->w), work_func);
   schedule_work(&(i->w));
 }
@@ -129,28 +134,41 @@ void _atom_count_sum(struct atom * i, int c)
   }
 }
 
-void _record_detail(struct atom* i, unsigned long addr, bool is_anon)
+void _record_detail(struct atom* i, struct record_task *t)
 {
   struct kv* p;
   struct list_head *head;
+  unsigned long addr = t->addr;
 
-  if (is_anon) {
-    head = &(i->anon_detail);
-  } else {
+  if (t->file) {
     head = &(i->file_detail);
+  } else {
+    head = &(i->anon_detail);
   }
 
   list_for_each_entry(p, head, list) {
     if (p->addr == addr) {
       p->count++;
       _atom_count_sum(i, p->count);
+      if (t->file)
+        put_filp(t->file);
       return;
     }
   }
+  if (t->file)
+    put_filp(t->file);
 
-  p = kmalloc(sizeof(*p), GFP_ATOMIC);
+  p = kzalloc(sizeof(*p), GFP_ATOMIC);
   if (unlikely(!p))
     return;
+  if (t->file) {
+    const char* tmp = file_path(t->file, t->name, NAME_SIZE);
+    if (IS_ERR(tmp)) {
+      memcpy(p->vm_file_name, "tooloong", 9);
+    } else  {
+      memcpy(p->vm_file_name, tmp, min(strlen(tmp), NAME_SIZE));
+    }
+  }
   p->addr = addr;
   p->count = 1;
   _atom_count_sum(i, p->count);
@@ -177,7 +195,7 @@ static void do_record_refault(struct record_task *t)
   mutex_lock(&record_lock);
   hash_for_each_possible(atoms, i, hlist, t->pid) {
     if (i->pid == t->pid) {
-      _record_detail(i, t->addr, t->is_anon);
+      _record_detail(i, t);
       mutex_unlock(&record_lock);
       return;
     }
@@ -194,7 +212,7 @@ static void do_record_refault(struct record_task *t)
   memcpy(i->name, t->name, NAME_SIZE);
 
   mutex_lock(&record_lock);
-  _record_detail(i, t->addr, t->is_anon);
+  _record_detail(i, t);
   hash_add(atoms, &(i->hlist), t->pid);
   mutex_unlock(&record_lock);
 }
@@ -221,7 +239,7 @@ void ggoo(struct seq_file* file, const char* t, struct list_head* head, int min)
   list_for_each_entry(p, head, list) {
     all += p->count;
     if (p->count > min) {
-      seq_printf(file, " %llx %d\n", p->addr, p->count);
+      seq_printf(file, " %s %llx %d\n", p->vm_file_name, p->addr, p->count);
     }
   }
 }
@@ -253,7 +271,7 @@ void _record_dump_detail(struct seq_file* file, struct atom *i)
     file_all += p->count;
   }
 
-  seq_printf(file, "%d\t%ld\t%ld%%\t%d\t%s", memcg_id, anon_all+file_all, anon_all*100/(anon_all+file_all+1),
+  seq_printf(file, "%d\t%ld\t%ld%%\t%d\t%s", memcg_id, anon_all+file_all, anon_all,
              i->pid, i->name);
 
   ggoo(file, "file", &(i->file_detail), 100);
@@ -273,7 +291,7 @@ void record_dump(struct seq_file* file)
   struct hlist_node *tmp;
   int bkt;
 
-  seq_printf(file, "MEMID\tALL\tAnon%%\tPID\tCOMM\n");
+  seq_printf(file, "MEMID\tALL\tAnon\tPID\tCOMM\n");
 
   mutex_lock(&record_lock);
   hash_for_each_safe(atoms, bkt, tmp, i, hlist) {
@@ -312,7 +330,7 @@ int hook_ret_swapin_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
   struct readswapin_args *d = (struct readswapin_args*)ri->data;
   bool *miss = d->miss_from_swapcache;
   if (miss && *miss) {
-    prepare_record_refault(d->address, true);
+    prepare_record_refault(d->address, 0);
   }
   return 0;
 }
@@ -322,15 +340,17 @@ int hook_filemap_refault(struct kprobe *p, struct pt_regs *regs)
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0))
   struct vm_fault *vmf = (void*)(regs->di);
+  struct vm_area_struct* vma = vmf->vma;
   unsigned long addr = (unsigned long)(vmf->address);
 #else
+  struct vm_area_struct* vma = (void*)(regs->di);
   struct vm_fault *vmf = (void*)(regs->si);
   unsigned long addr = (unsigned long)(vmf->virtual_address);
 #endif
   if (!current->mm) {
     return 1;
   }
-  prepare_record_refault(addr, false);
+  prepare_record_refault(addr, vma->vm_file);
   return 0;
 }
 

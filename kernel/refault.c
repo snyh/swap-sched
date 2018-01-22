@@ -3,6 +3,7 @@
 #include <linux/kprobes.h>
 #include <linux/slab.h>
 #include <linux/ptrace.h>
+#include <linux/version.h>
 #include <linux/pagemap.h>
 #include <linux/module.h>
 #include <linux/seq_file.h>
@@ -292,19 +293,17 @@ int hook_entry_swapin_refault(struct kretprobe_instance *ri, struct pt_regs *reg
   if (!current->mm)
     return 1;
 
-  vma = (struct vm_area_struct*)(regs->dx);
-  if (!vma) {
+  vma = (struct vm_area_struct*)(void*)(unsigned long)(regs->dx);
+  if (!vma || (vma_is_anonymous(vma) && vma->vm_pgoff > 0)) {
+    // if the vm_area_struct is a shmmem pseudo vma
     return 1;
   }
 
   d = (struct readswapin_args*)ri->data;
   d->address = (unsigned long)regs->cx;
-  if (d->address == 0) {
-    printk("zero address swapin %d [0x%llx - 0x%llx]\n", current->pid,
-           vma->vm_start, vma->vm_end);
-  }
+  BUG_ON(!d->address);
   d->miss_from_swapcache = (void*)(regs->r8);
-  return 0;
+  return 1;
 }
 
 int hook_ret_swapin_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
@@ -320,8 +319,14 @@ int hook_ret_swapin_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 int hook_filemap_refault(struct kprobe *p, struct pt_regs *regs)
 {
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0))
+  struct vm_fault *vmf = (void*)(regs->di);
+  unsigned long addr = (unsigned long)(vmf->address);
+#else
   struct vm_fault *vmf = (void*)(regs->si);
-  unsigned long addr = (unsigned long)vmf->virtual_address;
+  unsigned long addr = (unsigned long)(vmf->virtual_address);
+#endif
   if (!current->mm) {
     return 1;
   }
@@ -338,12 +343,12 @@ int hook_do_exit(struct kprobe *p, struct pt_regs *regs)
   return 0;
 }
 
-#define NUM_PROBE 1
+#define NUM_PROBE 2
 static struct kprobe pp[NUM_PROBE] = {
-  /* { */
-  /*   .symbol_name = "do_exit", */
-  /*   .pre_handler = hook_do_exit, */
-  /* }, */
+  {
+    .symbol_name = "shmem_fault",
+    .pre_handler = hook_filemap_refault,
+  },
   {
     .symbol_name = "filemap_fault",
     .pre_handler = hook_filemap_refault,

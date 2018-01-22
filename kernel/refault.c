@@ -217,6 +217,12 @@ void ggoo(struct seq_file* file, const char* t, struct list_head* head, int min)
   seq_printf(file, "\tUse %ldKB reduce %dMB IO(%ld%%) for %s",
              good_num * 4 , good_sum * 4 / 1024, good_sum*100 / all,
              t);
+  list_for_each_entry(p, head, list) {
+    all += p->count;
+    if (p->count > min) {
+      seq_printf(file, " %llx %d\n", p->addr, p->count);
+    }
+  }
 }
 
 
@@ -282,11 +288,21 @@ void record_dump(struct seq_file* file)
 int hook_entry_swapin_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
   struct readswapin_args *d;
+  struct vm_area_struct *vma;
   if (!current->mm)
     return 1;
 
+  vma = (struct vm_area_struct*)(regs->dx);
+  if (!vma) {
+    return 1;
+  }
+
   d = (struct readswapin_args*)ri->data;
   d->address = (unsigned long)regs->cx;
+  if (d->address == 0) {
+    printk("zero address swapin %d [0x%llx - 0x%llx]\n", current->pid,
+           vma->vm_start, vma->vm_end);
+  }
   d->miss_from_swapcache = (void*)(regs->r8);
   return 0;
 }

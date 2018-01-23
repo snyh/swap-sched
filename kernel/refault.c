@@ -166,7 +166,7 @@ void _record_detail(struct atom* i, struct record_task *t)
     if (IS_ERR(tmp)) {
       memcpy(p->vm_file_name, "tooloong", 9);
     } else  {
-      memcpy(p->vm_file_name, tmp, min(strlen(tmp), NAME_SIZE));
+      memcpy(p->vm_file_name, tmp, min((int)strlen(tmp), NAME_SIZE));
     }
   }
   p->addr = addr;
@@ -233,13 +233,13 @@ void ggoo(struct seq_file* file, const char* t, struct list_head* head, int min)
   if (good_num == 0 || all == 0) {
     return;
   }
-  seq_printf(file, "\tUse %ldKB reduce %dMB IO(%ld%%) for %s",
+  seq_printf(file, "\tUse %ldKB reduce %luMB IO(%ld%%) for %s",
              good_num * 4 , good_sum * 4 / 1024, good_sum*100 / all,
              t);
   list_for_each_entry(p, head, list) {
     all += p->count;
     if (p->count > min) {
-      seq_printf(file, " %s %llx %d\n", p->vm_file_name, p->addr, p->count);
+      seq_printf(file, " %s %lx %u\n", p->vm_file_name, p->addr, p->count);
     }
   }
 }
@@ -363,62 +363,40 @@ int hook_do_exit(struct kprobe *p, struct pt_regs *regs)
   return 0;
 }
 
-#define NUM_PROBE 2
-static struct kprobe pp[NUM_PROBE] = {
-  {
-    .symbol_name = "shmem_fault",
-    .pre_handler = hook_filemap_refault,
-  },
-  {
-    .symbol_name = "filemap_fault",
-    .pre_handler = hook_filemap_refault,
-  },
+
+static struct kprobe kp1 = {
+  .symbol_name = "shmem_fault",
+  .pre_handler = hook_filemap_refault,
+};
+static struct kprobe kp2 = {
+  .symbol_name = "filemap_fault",
+  .pre_handler = hook_filemap_refault,
+};
+static struct kretprobe krp1 = {
+  .handler = hook_ret_swapin_refault,
+  .entry_handler = hook_entry_swapin_refault,
+  .data_size = sizeof(struct readswapin_args),
+  .kp.symbol_name = "__read_swap_cache_async",
 };
 
+#define NUM_PROBE 2
+static struct kprobe *pp[NUM_PROBE] = { &kp1, &kp2 };
 #define NUM_RETPROBE 1
-static struct kretprobe retpp[NUM_RETPROBE] = {
-  {
-    .handler = hook_ret_swapin_refault,
-    .entry_handler = hook_entry_swapin_refault,
-    .data_size = sizeof(struct readswapin_args),
-    .kp.symbol_name = "__read_swap_cache_async",
-  },
-};
+static struct kretprobe *retpp[NUM_RETPROBE] = { &krp1 };
 
 int register_pp(void)
 {
-  int ret = 0;
-  int i, j;
-  for (i=0; i<NUM_PROBE;i++) {
-    ret = register_kprobe(&(pp[i]));
-    if (ret) {
-      for (j=i; j>=0; j--) {
-        unregister_kprobe(&(pp[j]));
-      }
-      return ret;
-    }
+  int ret = register_kprobes(pp, NUM_PROBE);
+  if (!register_kretprobes(retpp, NUM_RETPROBE)) {
+    unregister_kretprobes(retpp, NUM_RETPROBE);
   }
-  for (i=0; i<NUM_RETPROBE;i++) {
-    ret = register_kretprobe(&(retpp[i]));
-    if (ret) {
-      for (j=i; j>=0; j--) {
-        unregister_kretprobe(&(retpp[j]));
-      }
-      return ret;
-    }
-  }
-  return 0;
+  return ret;
 }
 
 void unregister_pp(void)
 {
-  int i;
-  for (i=0; i < NUM_RETPROBE; i++) {
-    unregister_kretprobe(&retpp[i]);
-  }
-  for (i=0; i < NUM_PROBE; i++) {
-    unregister_kprobe(&pp[i]);
-  }
+  unregister_kretprobes(retpp, NUM_RETPROBE);
+  unregister_kprobes(pp, NUM_PROBE);
 }
 
 #define PROC_NAME "refault"

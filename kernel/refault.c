@@ -1,5 +1,6 @@
 #include <linux/stringhash.h>
 #include <linux/hashtable.h>
+#include <linux/mm.h>
 #include <linux/kprobes.h>
 #include <linux/slab.h>
 #include <linux/ptrace.h>
@@ -18,41 +19,34 @@ DEFINE_HASHTABLE(atoms, 8);
 
 #define NAME_SIZE 128
 
-struct record_task {
-  pid_t pid;
-  char name[NAME_SIZE];
-  unsigned long addr;
-  struct file *file;
-  bool is_release;
+struct refault_task {
   struct work_struct w;
+  pid_t id;
+  int ret;
+  char name[NAME_SIZE+1];
+  unsigned long address;
+  struct file *file;
 };
 
 struct kv {
   struct list_head list;
   unsigned long addr;
-  char vm_file_name[NAME_SIZE];
   u32 count;
 };
 
 #define MAX_COUNT_SIZE 256
 struct atom {
   struct hlist_node hlist;
-  pid_t pid;
-  char name[NAME_SIZE];
+
+  unsigned long id;
+  char desc[NAME_SIZE+1];
   u32 count_sum[MAX_COUNT_SIZE+1];
-  struct list_head anon_detail;
-  struct list_head file_detail;
+  struct list_head detail;
 };
 
 DEFINE_MUTEX(record_lock);
 
-struct readswapin_args {
-  unsigned long address;
-  bool *miss_from_swapcache;
-};
-
-static void do_record_refault(struct record_task *t);
-static void do_release(pid_t pid);
+static void do_record_refault(struct refault_task *t);
 void _destroy_atom(struct atom* i);
 
 unsigned short task_memcg_id(pid_t p)
@@ -76,52 +70,6 @@ unsigned short task_memcg_id(pid_t p)
   return id;
 }
 
-static void work_func(struct work_struct *work)
-{
-  struct record_task *t = container_of(work, struct record_task, w);
-  if (t->is_release) {
-    do_release(t->pid);
-  } else {
-    do_record_refault(t);
-  }
-  kfree(t);
-}
-
-void prepare_release(pid_t pid)
-{
-  struct record_task *i = 0;
-  i = kmalloc(sizeof(*i), GFP_ATOMIC);
-  if (unlikely(!i))
-    return;
-  i->pid = pid;
-  i->is_release = true;
-  i->file = 0;
-  INIT_WORK(&(i->w), work_func);
-
-  schedule_work(&(i->w));
-}
-
-void prepare_record_refault(unsigned long addr, struct file* file)
-{
-  struct record_task *i = 0;
-  int name_s;
-  i = kzalloc(sizeof(*i), GFP_ATOMIC);
-  if (unlikely(!i))
-    return;
-
-  i->is_release = false;
-  i->pid = current->pid;
-  name_s = strlen(current->comm);
-  memcpy(i->name, current->comm, min(NAME_SIZE, name_s));
-  i->addr = addr;
-  if (file) {
-    i->file = get_file(file);
-  }
-
-  INIT_WORK(&(i->w), work_func);
-  schedule_work(&(i->w));
-}
-
 void _atom_count_sum(struct atom * i, int c)
 {
   if (c >= MAX_COUNT_SIZE) {
@@ -134,90 +82,29 @@ void _atom_count_sum(struct atom * i, int c)
   }
 }
 
-void _record_detail(struct atom* i, struct record_task *t)
+void _record_detail(struct atom* i, unsigned long addr)
 {
   struct kv* p;
-  struct list_head *head;
-  unsigned long addr = t->addr;
-
-  if (t->file) {
-    head = &(i->file_detail);
-  } else {
-    head = &(i->anon_detail);
-  }
+  struct list_head *head = &(i->detail);
 
   list_for_each_entry(p, head, list) {
     if (p->addr == addr) {
       p->count++;
       _atom_count_sum(i, p->count);
-      if (t->file)
-        put_filp(t->file);
       return;
     }
   }
-  if (t->file)
-    put_filp(t->file);
 
   p = kzalloc(sizeof(*p), GFP_ATOMIC);
   if (unlikely(!p))
     return;
-  if (t->file) {
-    const char* tmp = file_path(t->file, t->name, NAME_SIZE);
-    if (IS_ERR(tmp)) {
-      memcpy(p->vm_file_name, "tooloong", 9);
-    } else  {
-      memcpy(p->vm_file_name, tmp, min((int)strlen(tmp), NAME_SIZE));
-    }
-  }
   p->addr = addr;
   p->count = 1;
   _atom_count_sum(i, p->count);
   list_add(&(p->list), head);
 }
 
-static void do_release(pid_t pid)
-{
-  struct atom *i = NULL;
-  mutex_lock(&record_lock);
-  hash_for_each_possible(atoms, i, hlist, pid) {
-    if (i->pid == pid)
-      break;
-  }
-  if (i) {
-    _destroy_atom(i);
-  }
-  mutex_unlock(&record_lock);
-}
-static void do_record_refault(struct record_task *t)
-{
-  struct atom *i = NULL;
-
-  mutex_lock(&record_lock);
-  hash_for_each_possible(atoms, i, hlist, t->pid) {
-    if (i->pid == t->pid) {
-      _record_detail(i, t);
-      mutex_unlock(&record_lock);
-      return;
-    }
-  }
-  mutex_unlock(&record_lock);
-
-  i = kzalloc(sizeof(*i), GFP_ATOMIC);
-  if (unlikely(!i))
-    return;
-
-  INIT_LIST_HEAD(&(i->anon_detail));
-  INIT_LIST_HEAD(&(i->file_detail));
-  i->pid = t->pid;
-  memcpy(i->name, t->name, NAME_SIZE);
-
-  mutex_lock(&record_lock);
-  _record_detail(i, t);
-  hash_add(atoms, &(i->hlist), t->pid);
-  mutex_unlock(&record_lock);
-}
-
-void ggoo(struct seq_file* file, const char* t, struct list_head* head, int min)
+void _dump_block(struct seq_file* file, struct list_head* head, int min)
 {
   struct kv *p;
   unsigned long all = 0;
@@ -233,55 +120,27 @@ void ggoo(struct seq_file* file, const char* t, struct list_head* head, int min)
   if (good_num == 0 || all == 0) {
     return;
   }
-  seq_printf(file, "\tUse %ldKB reduce %luMB IO(%ld%%) for %s",
-             good_num * 4 , good_sum * 4 / 1024, good_sum*100 / all,
-             t);
+  seq_printf(file, "\tUse %ldKB reduce %luMB IO(%ld%%) ",
+             good_num * 4 , good_sum * 4 / 1024, good_sum*100 / all);
   list_for_each_entry(p, head, list) {
     all += p->count;
     if (p->count > min) {
-      seq_printf(file, " %s %lx %u\n", p->vm_file_name, p->addr, p->count);
+      seq_printf(file, " 0x%lx %u", p->addr, p->count);
     }
   }
 }
 
-
 void _record_dump_detail(struct seq_file* file, struct atom *i)
 {
   struct kv *p;
-  int greater_than_one = 0, pos = 2;
-  unsigned long file_all = 0, anon_all = 0;
-  unsigned short memcg_id = task_memcg_id(i->pid);
-  if (memcg_id == 0) {
-    _destroy_atom(i);
-    return;
+  unsigned long all = 0;
+
+  list_for_each_entry(p, &(i->detail), list) {
+    all += p->count;
   }
+  seq_printf(file, "%ld\t%ld\t%s", all, i->id, i->desc);
 
-  for (; pos < MAX_COUNT_SIZE; pos++) {
-    greater_than_one += i->count_sum[pos];
-  }
-  if (greater_than_one == 0) {
-    return;
-  }
-
-  list_for_each_entry(p, &(i->anon_detail), list) {
-    anon_all += p->count;
-  }
-
-  list_for_each_entry(p, &(i->file_detail), list) {
-    file_all += p->count;
-  }
-
-  seq_printf(file, "%d\t%ld\t%ld%%\t%d\t%s", memcg_id, anon_all+file_all, anon_all,
-             i->pid, i->name);
-
-  ggoo(file, "file", &(i->file_detail), 100);
-  ggoo(file, "anonymous", &(i->anon_detail), 100);
-
-  /* seq_putc(file, '\t'); */
-  /* for (pos = 0; pos < MAX_COUNT_SIZE; pos++) { */
-  /*   if (i->count_sum[pos] > 0) */
-  /*     seq_printf(file, " [%d:%d]", pos+1, i->count_sum[pos]); */
-  /* } */
+  _dump_block(file, &(i->detail), 3);
   seq_putc(file, '\n');
 }
 
@@ -291,112 +150,160 @@ void record_dump(struct seq_file* file)
   struct hlist_node *tmp;
   int bkt;
 
-  seq_printf(file, "MEMID\tALL\tAnon\tPID\tCOMM\n");
+  seq_printf(file, "REFAULTS\tID\tDESC\n");
 
   mutex_lock(&record_lock);
   hash_for_each_safe(atoms, bkt, tmp, i, hlist) {
-    if (current->pid == i->pid) {
-      continue;
+    int pos, greater_than_one = 0;
+    for (pos=2; pos < MAX_COUNT_SIZE; pos++) {
+      greater_than_one = i->count_sum[pos];
+      if (greater_than_one > 0) {
+        _record_dump_detail(file, i);
+        break;
+      }
     }
-    _record_dump_detail(file, i);
   }
   mutex_unlock(&record_lock);
 }
 
 
-int hook_entry_swapin_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
+int hook_entry_do_swap_page(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-  struct readswapin_args *d;
-  struct vm_area_struct *vma;
+  struct refault_task *d;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0))
+  struct vm_fault *vmf = (void*)(regs->di);
+  unsigned long addr = (unsigned long)(vmf->address);
+#else
+  struct fault_env *env = (void*)(regs->di);
+  unsigned long addr = env->address;
+#endif
   if (!current->mm)
     return 1;
 
-  vma = (struct vm_area_struct*)(void*)(unsigned long)(regs->dx);
-  if (!vma || (vma_is_anonymous(vma) && vma->vm_pgoff > 0)) {
-    // if the vm_area_struct is a shmmem pseudo vma
-    return 1;
-  }
-
-  d = (struct readswapin_args*)ri->data;
-  d->address = (unsigned long)regs->cx;
-  BUG_ON(!d->address);
-  d->miss_from_swapcache = (void*)(regs->r8);
-  return 1;
-}
-
-int hook_ret_swapin_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-  int __maybe_unused retval = regs_return_value(regs);
-  struct readswapin_args *d = (struct readswapin_args*)ri->data;
-  bool *miss = d->miss_from_swapcache;
-  if (miss && *miss) {
-    prepare_record_refault(d->address, 0);
-  }
+  BUG_ON(!addr);
+  d = (struct refault_task*)ri->data;
+  d->address = addr;
+  d->file = 0;
+  d->id = ri->task->pid;
+  d->name[0] = '*';
+  strncpy(d->name+1, current->comm, NAME_SIZE-1);
   return 0;
 }
 
-int hook_filemap_refault(struct kprobe *p, struct pt_regs *regs)
+int hook_entry_file_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-
+  struct refault_task *d;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0))
   struct vm_fault *vmf = (void*)(regs->di);
   struct vm_area_struct* vma = vmf->vma;
-  unsigned long addr = (unsigned long)(vmf->address);
+  unsigned long addr = vmf->pgoff;
 #else
   struct vm_area_struct* vma = (void*)(regs->di);
   struct vm_fault *vmf = (void*)(regs->si);
-  unsigned long addr = (unsigned long)(vmf->virtual_address);
+  unsigned long addr = vmf->pgoff;
+
 #endif
-  if (!current->mm) {
-    return 1;
-  }
-  prepare_record_refault(addr, vma->vm_file);
+  BUG_ON(!vma->vm_file);
+  d = (struct refault_task*)ri->data;
+  d->address = addr;
+  d->file = get_file(vma->vm_file);
+  d->id = file_inode(vma->vm_file)->i_ino;
   return 0;
 }
 
-int hook_do_exit(struct kprobe *p, struct pt_regs *regs)
+static void do_record_refault(struct refault_task *t)
 {
-  if (!current || !current->mm) {
-    return 1;
+  struct atom *i = NULL;
+
+  mutex_lock(&record_lock);
+  hash_for_each_possible(atoms, i, hlist, t->id) {
+    if (i->id == t->id) {
+      _record_detail(i, t->address);
+      mutex_unlock(&record_lock);
+      return;
+    }
   }
-  prepare_release(current->pid);
-  return 0;
+  mutex_unlock(&record_lock);
+
+  i = kzalloc(sizeof(*i), GFP_ATOMIC);
+  if (unlikely(!i))
+    return;
+
+  INIT_LIST_HEAD(&(i->detail));
+  i->id = t->id;
+  strncpy(i->desc, t->name, NAME_SIZE);
+
+  mutex_lock(&record_lock);
+  _record_detail(i, t->address);
+  hash_add(atoms, &(i->hlist), t->id);
+  mutex_unlock(&record_lock);
 }
 
 
-static struct kprobe kp1 = {
-  .symbol_name = "shmem_fault",
-  .pre_handler = hook_filemap_refault,
-};
-static struct kprobe kp2 = {
-  .symbol_name = "filemap_fault",
-  .pre_handler = hook_filemap_refault,
-};
+static void work_func(struct work_struct *work)
+{
+  struct refault_task *t = container_of(work, struct refault_task, w);
+  static char buf[NAME_SIZE+1] = {};
+  char* tmp = 0;
+  if (t->ret & VM_FAULT_MAJOR) {
+    if (t->file) {
+      tmp = file_path(t->file, buf, NAME_SIZE);
+      if (IS_ERR(tmp)) {
+        strncpy(t->name, "tooloong", NAME_SIZE);
+      } else {
+        strncpy(t->name, tmp, NAME_SIZE);
+      }
+      do_record_refault(t);
+    } else {
+      do_record_refault(t);
+    }
+  }
+  if (t->file) {
+    fput(t->file);
+    t->file = 0;
+  }
+  kfree(t);
+}
+
+int hook_ret_refault(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+  struct refault_task *d = kmemdup(ri->data, sizeof(struct refault_task), GFP_ATOMIC);
+  d->ret = regs_return_value(regs);
+  INIT_WORK(&(d->w), work_func);
+  schedule_work(&(d->w));
+  return 0;
+}
+
 static struct kretprobe krp1 = {
-  .handler = hook_ret_swapin_refault,
-  .entry_handler = hook_entry_swapin_refault,
-  .data_size = sizeof(struct readswapin_args),
-  .kp.symbol_name = "__read_swap_cache_async",
+  .kp.symbol_name = "shmem_fault",
+  .handler = hook_ret_refault,
+  .data_size = sizeof(struct refault_task),
+  .entry_handler = hook_entry_file_refault,
+};
+static struct kretprobe krp2 = {
+  .kp.symbol_name = "filemap_fault",
+  .handler = hook_ret_refault,
+  .data_size = sizeof(struct refault_task),
+  .entry_handler = hook_entry_file_refault,
+};
+static struct kretprobe krp3 = {
+  .handler = hook_ret_refault,
+  .entry_handler = hook_entry_do_swap_page,
+  .data_size = sizeof(struct refault_task),
+  .kp.symbol_name = "do_swap_page",
 };
 
-#define NUM_PROBE 2
-static struct kprobe *pp[NUM_PROBE] = { &kp1, &kp2 };
-#define NUM_RETPROBE 1
-static struct kretprobe *retpp[NUM_RETPROBE] = { &krp1 };
+#define NUM_RETPROBE 3
+static struct kretprobe *retpp[NUM_RETPROBE] = { &krp1, &krp2, &krp3 };
 
-int register_pp(void)
+int register_hooks(void)
 {
-  int ret = register_kprobes(pp, NUM_PROBE);
-  if (!register_kretprobes(retpp, NUM_RETPROBE)) {
-    unregister_kretprobes(retpp, NUM_RETPROBE);
-  }
-  return ret;
+  return register_kretprobes(retpp, NUM_RETPROBE);
 }
 
-void unregister_pp(void)
+void unregister_hooks(void)
 {
   unregister_kretprobes(retpp, NUM_RETPROBE);
-  unregister_kprobes(pp, NUM_PROBE);
 }
 
 #define PROC_NAME "refault"
@@ -429,7 +336,7 @@ int refault_record_init(void)
   if (proc_file_entry == NULL)
     return -ENOMEM;
 
-  ret = register_pp();
+  ret = register_hooks();
   if (ret < 0) {
     remove_proc_entry(PROC_NAME, NULL);
     printk(KERN_INFO "register_kprobe failed, returned %d\n",
@@ -442,11 +349,7 @@ int refault_record_init(void)
 void _destroy_atom(struct atom* i)
 {
   struct kv *p, *t;
-  list_for_each_entry_safe(p, t, &(i->anon_detail), list) {
-    list_del(&(p->list));
-    kfree(p);
-  }
-  list_for_each_entry_safe(p, t, &(i->file_detail), list) {
+  list_for_each_entry_safe(p, t, &(i->detail), list) {
     list_del(&(p->list));
     kfree(p);
   }
@@ -460,7 +363,7 @@ void refault_record_exit(void)
   struct hlist_node *t;
   int bkt;
 
-  unregister_pp();
+  unregister_hooks();
 
   flush_workqueue(system_wq);
 

@@ -1,0 +1,7 @@
+*.o
+*.ko
+.*
+/kernel/Module.symvers
+/kernel/modules.order
+*.log
+*.mod.c
